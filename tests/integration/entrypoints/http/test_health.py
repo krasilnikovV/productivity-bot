@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from productivity_bot.main import create_app
+from productivity_bot.bootstrap.application import create_app
 
 
 def test_health_endpoint() -> None:

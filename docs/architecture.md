@@ -16,86 +16,290 @@ Productivity Bot
    +-- LLM
 ```
 
-Telegram is the user interface.
+Telegram is the main user interface.
 
 Singularity owns task data.
 
-PostgreSQL stores bot-specific state.
+PostgreSQL stores state specific to the bot.
 
 Calendar provides time constraints.
 
-The LLM is used for language-related operations.
+The LLM is used where natural language understanding or generation is required.
 
-## Components
+The application follows Clean Architecture principles with a Ports and Adapters approach. Business logic should not depend on Telegram, FastAPI, Singularity, PostgreSQL, or a specific LLM provider.
 
-### Telegram interface
+## Application structure
 
-Handles Telegram webhooks, buttons, messages, and outgoing notifications.
+```text
+src/productivity_bot/
+├── domain/
+│   ├── entities/
+│   ├── value_objects/
+│   ├── services/
+│   └── exceptions.py
+│
+├── application/
+│   ├── use_cases/
+│   ├── ports/
+│   ├── dto/
+│   ├── services/
+│   └── exceptions.py
+│
+├── adapters/
+│   ├── singularity/
+│   ├── persistence/
+│   ├── calendar/
+│   └── llm/
+│
+├── entrypoints/
+│   ├── http/
+│   │   ├── routers/
+│   │   └── schemas/
+│   └── telegram/
+│       ├── handlers/
+│       └── keyboards/
+│
+├── bootstrap/
+│   ├── container.py
+│   └── application.py
+│
+├── config.py
+└── main.py
+```
 
-### Application core
+Directories should be added when they are needed. The structure is a boundary definition, not a requirement to create empty modules in advance.
 
-Contains the main use cases and coordinates integrations.
+## Dependency rules
 
-Examples:
+Dependencies point inward:
 
-* capture task;
-* get next action;
-* complete task;
-* skip task;
-* snooze task;
-* decompose task.
+```text
+entrypoints ──> application ──> domain
+                    ^
+                    |
+                 adapters
+```
 
-### Decision engine
+`domain` contains business concepts and rules that do not require I/O.
 
-Selects the next task.
+`application` contains use cases and defines the interfaces it needs to communicate with external systems.
 
-Inputs may include:
+`adapters` implement those interfaces.
 
-* deadline;
-* duration;
-* priority;
-* calendar availability;
-* tags and context;
-* snooze state;
-* recent skips.
+`entrypoints` translate HTTP, Telegram, or other external input into application calls.
 
-The main ranking logic should be deterministic and testable.
+`bootstrap` creates concrete implementations and wires them together.
 
-### Singularity adapter
+`domain` and `application` must not import FastAPI, aiogram, SQLAlchemy, HTTP clients, or concrete integrations.
 
-Wraps the Singularity API.
+Application code must not call Singularity, PostgreSQL, Calendar, or an LLM directly.
 
-Responsible for reading and updating tasks, projects, tags, and related entities.
+## Domain
 
-Application code should not depend directly on Singularity API details.
+The domain contains concepts and rules that belong to the productivity system itself.
 
-### Calendar adapter
+Examples may include:
 
-Provides events and busy intervals.
+* tasks used by the decision engine;
+* task identifiers;
+* time intervals;
+* ranking rules.
 
-Calendar data is used as a constraint for task selection.
+Domain models should contain only the data needed by our business logic. They should not mirror Singularity API responses.
 
-### LLM adapter
+Plain Python types, dataclasses, enums, and value objects are preferred unless another dependency has a clear benefit.
 
-Provides operations such as:
+## Application
 
-* parse natural-language task input;
-* classify a task;
-* decompose a task;
-* generate clarification questions;
-* break ranking ties.
+The application layer contains the main use cases and coordinates domain logic with external dependencies.
+
+Initial use cases are:
+
+```text
+CaptureTask
+GetNextAction
+CompleteTask
+SkipTask
+SnoozeTask
+DecomposeTask
+```
+
+A use case may load data through application ports, apply business rules, update external state, and return a result.
+
+It must not depend on how those operations are implemented.
+
+For example, `GetNextAction` may use:
+
+```text
+TaskRepository
+CalendarPort
+RuntimeStateRepository
+        |
+        v
+DecisionEngine
+        |
+        v
+one task
+```
+
+The main ranking logic should remain deterministic and testable. The LLM may be used as a tie-breaker, but basic scheduling and ranking rules should stay in normal code.
+
+## Ports
+
+Ports are interfaces defined by the application layer.
+
+Expected ports include:
+
+```text
+TaskRepository
+RuntimeStateRepository
+CalendarPort
+LLMPort
+```
+
+For example, task operations are exposed through `TaskRepository`.
+
+```text
+Application
+    |
+    v
+TaskRepository
+    ^
+    |
+SingularityTaskRepository
+```
+
+The application therefore knows how to work with tasks, but does not know how the Singularity API works.
+
+The same rule applies to persistence, Calendar, and LLM integrations.
+
+## Adapters
+
+Adapters contain integration-specific code and implement application ports.
+
+### Singularity
+
+The Singularity adapter is responsible for reading and updating tasks, projects, tags, and related entities.
+
+A typical structure is:
+
+```text
+adapters/singularity/
+├── client.py
+├── schemas.py
+├── mapper.py
+└── adapter.py
+```
+
+`client.py` handles HTTP, authentication, timeouts, and API errors.
+
+`schemas.py` contains Singularity request and response models.
+
+`mapper.py` converts Singularity models into application or domain models and back.
+
+`adapter.py` implements the application port.
+
+Singularity-specific response models and HTTP details must not leak into application code.
+
+### Calendar
+
+The Calendar adapter provides events and busy intervals.
+
+Calendar data is used as a constraint when selecting the next task.
+
+The application should not depend on a specific calendar provider.
+
+### LLM
+
+The LLM adapter provides operations such as:
+
+* parsing natural-language task input;
+* classifying a task;
+* decomposing a task;
+* generating clarification questions;
+* breaking ranking ties.
+
+LLM output must be validated before it changes external state.
 
 The application should not depend on a specific LLM provider.
 
 ### Persistence
 
-PostgreSQL stores state that does not belong in Singularity.
+The persistence adapter contains PostgreSQL and SQLAlchemy-specific code.
+
+SQLAlchemy models are persistence models and are not used directly as domain or application models.
+
+PostgreSQL must not become a second task database.
+
+## Entrypoints
+
+Entrypoints are responsible only for transport-specific concerns.
+
+The main entrypoints are FastAPI and Telegram.
+
+They:
+
+1. receive external input;
+2. convert it into an application command;
+3. call a use case;
+4. convert the result into a transport-specific response.
+
+They must not contain task ranking, persistence logic, Singularity API calls, or other business rules.
+
+Transport models should not be passed directly into application logic.
+
+For example:
+
+```text
+Telegram update
+      |
+      v
+CaptureTaskCommand
+      |
+      v
+CaptureTask
+      |
+      v
+CaptureTaskResult
+      |
+      v
+Telegram response
+```
+
+Pydantic is appropriate for HTTP schemas, external API schemas, configuration, and structured LLM output. Domain models do not need to depend on Pydantic.
+
+## Dependency injection
+
+Dependencies are passed explicitly, primarily through constructor injection.
+
+A DI framework is not required at this stage.
+
+Concrete implementations are created in the bootstrap layer:
+
+```text
+Settings
+   |
+   v
+SingularityClient
+   |
+   v
+SingularityTaskRepository
+   |
+   v
+CaptureTask
+```
+
+This is the composition root of the application.
+
+`main.py` should stay small. It creates the application and starts the configured entrypoints; it does not contain endpoints or business logic.
 
 ## Data ownership
 
 ### Singularity
 
-Stores:
+Singularity is the source of truth for tasks.
+
+It stores:
 
 ```text
 tasks
@@ -114,6 +318,8 @@ completion state
 Task data should not be copied into PostgreSQL as a second source of truth.
 
 ### PostgreSQL
+
+PostgreSQL stores state that does not belong in Singularity.
 
 Expected data includes:
 
@@ -142,7 +348,7 @@ The schema can change as implementation details become clearer.
 
 Calendar events stay in the calendar provider.
 
-The bot only reads the information required for planning.
+The bot reads only the information required for planning and task selection.
 
 ## Main flows
 
@@ -150,13 +356,17 @@ The bot only reads the information required for planning.
 
 ```text
 Telegram message
-      ↓
+      |
+      v
 interpret
-      ↓
+      |
+      v
 clarify if needed
-      ↓
+      |
+      v
 create task in Singularity
-      ↓
+      |
+      v
 reply
 ```
 
@@ -164,15 +374,18 @@ reply
 
 ```text
 request
-   ↓
+   |
+   v
 load Singularity tasks
-   ↓
-load calendar constraints
-   ↓
-load runtime state
-   ↓
+   |
+   +-- load calendar constraints
+   |
+   +-- load runtime state
+   |
+   v
 filter and rank
-   ↓
+   |
+   v
 return one task
 ```
 
@@ -182,7 +395,9 @@ Complete the task in Singularity.
 
 ### Skip
 
-Record the rejection and select another candidate.
+Record the rejection in runtime state and select another candidate.
+
+A skip does not change the task itself.
 
 ### Snooze
 
@@ -192,7 +407,47 @@ Do not change the task deadline just because the user does not want to do it rig
 
 ### Decomposition
 
-Use the LLM to produce a smaller actionable structure and store the result as Singularity subtasks.
+Use the LLM to produce a smaller actionable structure.
+
+The resulting subtasks are stored in Singularity.
+
+## Testing
+
+The architecture should allow most business logic to be tested without network access or a running database.
+
+```text
+tests/
+├── unit/
+│   ├── domain/
+│   └── application/
+├── integration/
+│   ├── adapters/
+│   └── entrypoints/
+└── 
+```
+
+Unit tests cover domain rules and application use cases.
+
+Application tests should use small fake implementations of ports where practical.
+
+For example:
+
+```text
+CaptureTask
+    +
+FakeTaskRepository
+```
+
+This is preferred over mocking HTTP or SQLAlchemy inside application tests.
+
+Integration tests cover boundaries such as:
+
+* Singularity API mapping and client behavior;
+* PostgreSQL repositories;
+* FastAPI endpoints;
+* Telegram webhook handling.
+
+Mocks are still useful where interaction itself is what the test needs to verify, but tests should not depend unnecessarily on implementation details.
 
 ## Background jobs
 
@@ -204,14 +459,34 @@ Later versions may run background jobs for:
 * repeatedly skipped tasks;
 * task cleanup.
 
+Background jobs call the same application use cases and ports as interactive entrypoints. They should not introduce a separate path to business logic.
+
 They should avoid notifying the user unless user input is actually needed.
+
+## Design guidelines
+
+Use an abstraction when it protects an application boundary or isolates an external dependency.
+
+Patterns that fit the current design include:
+
+* Repository for task and runtime-state access;
+* Adapter for external integrations;
+* constructor-based Dependency Injection;
+* Mapper between external and internal models;
+* Strategy when multiple ranking implementations are actually needed;
+* Factory for application or client construction.
+
+Do not add architectural patterns only for consistency with a textbook. CQRS, event buses, domain events, Unit of Work, or similar abstractions should be introduced only if a concrete requirement makes them useful.
 
 ## Constraints
 
 * Singularity is the task source of truth.
-* PostgreSQL must not become a duplicate task database.
+* PostgreSQL must not duplicate task data.
 * Telegram is the primary UI.
 * Proactive messages go to the main Telegram account.
-* Next-action requests work from every linked account.
-* External APIs should be isolated behind adapters.
-* LLM output must be validated before it changes external state.
+* Next-action requests work from every linked Telegram account.
+* External systems are accessed through adapters.
+* Application code depends on ports, not concrete integrations.
+* Business logic stays outside FastAPI and Telegram handlers.
+* LLM output is validated before changing external state.
+* Most application behavior must be testable without external services.

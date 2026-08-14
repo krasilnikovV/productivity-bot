@@ -25,7 +25,7 @@ Early MVP development.
 
 ## Development
 
-Python project managed with `uv`.
+The project requires Python 3.13 or newer and uses `uv` for dependency management.
 
 Install dependencies:
 
@@ -33,4 +33,25 @@ Install dependencies:
 uv sync
 ```
 
-Run instructions will be added when the first executable version is implemented.
+Create a local environment file and fill in the required values:
+
+```bash
+cp .env.example .env
+```
+
+Start the application:
+
+```bash
+uv run uvicorn productivity_bot.main:app --reload
+```
+
+Once the application is running, the available HTTP endpoints can be viewed in
+the Swagger UI at <http://127.0.0.1:8000/docs>.
+
+Run the checks:
+
+```bash
+uv run pytest
+uv run ruff check .
+uv run mypy src
+```

@@ -18,6 +18,7 @@ class FakeTaskRepository:
     async def list_active_tasks(self) -> Sequence[Task]:
         return []
 
+    # noinspection unused-parameter
     async def complete_task(self, task_id: str) -> None:
         return None
 

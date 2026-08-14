@@ -127,6 +127,7 @@ def make_app(
         feed_update_release=feed_update_release,
         shutdown_error=shutdown_error,
     )
+    # noinspection invalid-cast
     app = create_app(
         make_settings(webhook_base_url=webhook_base_url),
         bot=cast(Bot, bot),
@@ -135,6 +136,9 @@ def make_app(
     return app, bot, dispatcher, events
 
 
+@pytest.mark.filterwarnings(
+    "error::pydantic.warnings.UnsupportedFieldAttributeWarning",
+)
 def test_webhook_dispatches_valid_update() -> None:
     app, bot, dispatcher, _ = make_app()
 
@@ -151,6 +155,7 @@ def test_webhook_dispatches_valid_update() -> None:
     dispatched_bot, dispatched_update = dispatcher.feed_update_calls[0]
     assert dispatched_bot is bot
     assert dispatched_update.update_id == 42
+    assert dispatched_update.bot is bot
 
 
 def test_webhook_acknowledges_before_update_processing_finishes() -> None:
@@ -217,6 +222,9 @@ def test_webhook_rejects_malformed_update() -> None:
         )
 
     assert response.status_code == 422
+    error = response.json()["detail"][0]
+    assert error["type"] == "missing"
+    assert error["loc"] == ["body", "update_id"]
     assert dispatcher.feed_update_calls == []
 
 

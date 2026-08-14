@@ -93,12 +93,12 @@ async def test_list_active_tasks_reads_full_page_then_short_page() -> None:
         offset = int(request.url.params["offset"])
         offsets.append(offset)
         if offset == 0:
-            tasks = [
+            _tasks = [
                 {"id": f"T-{index}", "title": f"Task {index}"} for index in range(1000)
             ]
         else:
-            tasks = [{"id": "T-1000", "title": "Task 1000"}]
-        return httpx2.Response(200, json={"tasks": tasks})
+            _tasks = [{"id": "T-1000", "title": "Task 1000"}]
+        return httpx2.Response(200, json={"tasks": _tasks})
 
     async with SingularityClient(
         "token",
@@ -116,6 +116,7 @@ async def test_list_active_tasks_reads_full_page_then_short_page() -> None:
 async def test_list_active_tasks_returns_empty_list_after_one_request() -> None:
     request_count = 0
 
+    # noinspection unused-parameter
     async def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal request_count
         request_count += 1
@@ -155,6 +156,7 @@ async def test_complete_task_patches_checked_status() -> None:
     INVALID_TASK_PAYLOADS,
 )
 async def test_create_task_rejects_invalid_response(payload: dict[str, object]) -> None:
+    # noinspection unused-parameter
     async def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(201, json=payload)
 
@@ -174,6 +176,7 @@ async def test_create_task_rejects_invalid_response(payload: dict[str, object]) 
 async def test_list_active_tasks_rejects_invalid_task_response(
     task_payload: dict[str, object],
 ) -> None:
+    # noinspection unused-parameter
     async def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, json={"tasks": [task_payload]})
 

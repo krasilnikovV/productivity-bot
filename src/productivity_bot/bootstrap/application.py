@@ -27,9 +27,9 @@ def create_app(
     )
 
     @asynccontextmanager
-    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
         workflow_data = {
-            "app": application,
+            "app": fastapi_app,
             "dispatcher": application_dispatcher,
             **application_dispatcher.workflow_data,
         }
@@ -56,10 +56,12 @@ def create_app(
                         **workflow_data,
                     )
                 finally:
+                    # noinspection unresolved-references
                     await application_bot.session.close()
 
     application = FastAPI(title="Productivity Bot", lifespan=lifespan)
 
+    # Include FastAPI Routers
     application.include_router(health_router)
     application.include_router(telegram_webhook.router)
 

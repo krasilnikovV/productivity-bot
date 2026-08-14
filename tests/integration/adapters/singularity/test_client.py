@@ -67,6 +67,7 @@ async def test_request_normalizes_custom_base_url_and_leading_slash(
 async def test_non_2xx_response_raises_api_error(status_code: int) -> None:
     response_body = b'opaque error containing "secret-token"'
 
+    # noinspection unused-parameter
     async def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(status_code, content=response_body)
 
@@ -96,6 +97,7 @@ async def test_request_converts_transport_errors(
     transport_error: httpx2.RequestError,
     expected_error: type[SingularityTransportError],
 ) -> None:
+    # noinspection unused-parameter
     async def handler(request: httpx2.Request) -> httpx2.Response:
         raise transport_error
 

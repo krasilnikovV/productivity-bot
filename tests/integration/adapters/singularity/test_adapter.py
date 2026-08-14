@@ -8,6 +8,13 @@ from productivity_bot.adapters.singularity import SingularityAdapter, Singularit
 from productivity_bot.application.ports import TaskRepository
 from productivity_bot.domain.entities import Task
 
+INVALID_TASK_PAYLOADS = (
+    pytest.param({"title": "Missing id"}, id="missing-id"),
+    pytest.param({"id": "T-123"}, id="missing-title"),
+    pytest.param({"id": 123, "title": "Non-string id"}, id="non-string-id"),
+    pytest.param({"id": "T-123", "title": 123}, id="non-string-title"),
+)
+
 
 @pytest.mark.asyncio
 async def test_create_task_sends_title_and_maps_full_response() -> None:
@@ -145,12 +152,7 @@ async def test_complete_task_patches_checked_status() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload",
-    [
-        {"title": "Missing id"},
-        {"id": "T-123"},
-        {"id": 123, "title": "Non-string id"},
-        {"id": "T-123", "title": 123},
-    ],
+    INVALID_TASK_PAYLOADS,
 )
 async def test_create_task_rejects_invalid_response(payload: dict[str, object]) -> None:
     async def handler(request: httpx2.Request) -> httpx2.Response:
@@ -167,12 +169,7 @@ async def test_create_task_rejects_invalid_response(payload: dict[str, object]) 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "task_payload",
-    [
-        {"title": "Missing id"},
-        {"id": "T-123"},
-        {"id": 123, "title": "Non-string id"},
-        {"id": "T-123", "title": 123},
-    ],
+    INVALID_TASK_PAYLOADS,
 )
 async def test_list_active_tasks_rejects_invalid_task_response(
     task_payload: dict[str, object],

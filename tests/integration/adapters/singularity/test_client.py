@@ -126,13 +126,14 @@ def test_empty_token_is_rejected_before_transport(api_token: str) -> None:
 )
 async def test_external_url_is_rejected_before_transport(path: str) -> None:
     transport = TrackingTransport()
-    client = SingularityClient("token", transport=transport)
 
-    with pytest.raises(ValueError, match="path must be relative"):
-        await client.request("GET", path)
+    async with SingularityClient("token", transport=transport) as client:
+        with pytest.raises(ValueError, match="path must be relative"):
+            await client.request("GET", path)
 
-    assert transport.request_count == 0
-    await client.aclose()
+        assert transport.request_count == 0
+
+    assert transport.is_closed
 
 
 @pytest.mark.asyncio
@@ -152,13 +153,14 @@ async def test_external_url_is_rejected_before_transport(path: str) -> None:
 )
 async def test_dot_segment_is_rejected_before_transport(path: str) -> None:
     transport = TrackingTransport()
-    client = SingularityClient("token", transport=transport)
 
-    with pytest.raises(ValueError, match="must not contain dot segments"):
-        await client.request("GET", path)
+    async with SingularityClient("token", transport=transport) as client:
+        with pytest.raises(ValueError, match="must not contain dot segments"):
+            await client.request("GET", path)
 
-    assert transport.request_count == 0
-    await client.aclose()
+        assert transport.request_count == 0
+
+    assert transport.is_closed
 
 
 @pytest.mark.asyncio

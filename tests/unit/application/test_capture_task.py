@@ -31,4 +31,4 @@ async def test_capture_task_creates_task_with_original_message_text() -> None:
     result = await capture_task.execute("Call the doctor tomorrow.")
 
     assert repository.created_titles == ["Call the doctor tomorrow."]
-    assert result is created_task
+    assert result == created_task

@@ -43,16 +43,12 @@ class SingularityClient:
         if not api_token.strip():
             raise ValueError("Singularity API token must not be empty")
 
-        normalized_base_url = f"{base_url.rstrip('/')}/"
-        self._client = httpx2.AsyncClient(
-            base_url=normalized_base_url,
-            headers={
-                "Authorization": f"Bearer {api_token}",
-                "Accept": "application/json",
-            },
-            timeout=timeout,
-            transport=transport,
-        )
+        self._base_url = f"{base_url.rstrip('/')}/"
+        self._api_token = api_token
+        self._timeout = timeout
+        self._transport = transport
+        self._client: httpx2.AsyncClient | None = None
+        self._closed = False
 
     async def request(
         self,
@@ -71,7 +67,7 @@ class SingularityClient:
 
         relative_path = path.lstrip("/")
         try:
-            response = await self._client.request(
+            response = await self._get_client().request(
                 method,
                 relative_path,
                 params=params,
@@ -89,10 +85,17 @@ class SingularityClient:
 
     async def aclose(self) -> None:
         """Close the underlying connection pool."""
-        await self._client.aclose()
+        if self._closed:
+            return
+
+        self._closed = True
+        if self._client is not None:
+            await self._client.aclose()
+        elif self._transport is not None:
+            await self._transport.aclose()
 
     async def __aenter__(self) -> Self:
-        await self._client.__aenter__()
+        await self._get_client().__aenter__()
         return self
 
     async def __aexit__(
@@ -101,7 +104,30 @@ class SingularityClient:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        await self._client.__aexit__(exc_type, exc_value, traceback)
+        client = self._client
+        if client is None:
+            return
+
+        try:
+            await client.__aexit__(exc_type, exc_value, traceback)
+        finally:
+            self._closed = True
+
+    def _get_client(self) -> httpx2.AsyncClient:
+        if self._closed:
+            raise RuntimeError("Singularity client is closed")
+
+        if self._client is None:
+            self._client = httpx2.AsyncClient(
+                base_url=self._base_url,
+                headers={
+                    "Authorization": f"Bearer {self._api_token}",
+                    "Accept": "application/json",
+                },
+                timeout=self._timeout,
+                transport=self._transport,
+            )
+        return self._client
 
 
 def _contains_dot_segment(path: str) -> bool:

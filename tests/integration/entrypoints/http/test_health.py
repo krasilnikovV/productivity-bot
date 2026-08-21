@@ -7,6 +7,7 @@ from productivity_bot.config import Settings
 def test_health_endpoint() -> None:
     settings = Settings(
         telegram_bot_token="123456:test-token",
+        telegram_allowed_user_ids=frozenset({123}),
         telegram_webhook_secret="test_webhook_secret",
         singularity_api_token="test-singularity-token",
         database_url="postgresql+asyncpg://test:test@localhost/test",

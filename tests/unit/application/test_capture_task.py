@@ -24,12 +24,25 @@ class FakeTaskRepository:
 
 
 @pytest.mark.asyncio
-async def test_capture_task_creates_task_with_original_message_text() -> None:
+async def test_capture_task_creates_task_with_normalized_message_text() -> None:
     created_task = Task(id="T-123", title="Call the doctor tomorrow.")
     repository = FakeTaskRepository(created_task)
     capture_task = CaptureTask(repository)
 
-    result = await capture_task.execute("Call the doctor tomorrow.")
+    result = await capture_task.execute("  Call the doctor tomorrow.\n")
 
     assert repository.created_titles == ["Call the doctor tomorrow."]
     assert result == created_task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message_text", ["", " ", "\t\n"])
+async def test_capture_task_rejects_blank_message_text(message_text: str) -> None:
+    created_task = Task(id="T-123", title="unused")
+    repository = FakeTaskRepository(created_task)
+    capture_task = CaptureTask(repository)
+
+    with pytest.raises(ValueError, match="Task title must not be empty"):
+        await capture_task.execute(message_text)
+
+    assert repository.created_titles == []

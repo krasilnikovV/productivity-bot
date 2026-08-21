@@ -248,6 +248,39 @@ They must not contain task ranking, persistence logic, Singularity API calls, or
 
 Transport models should not be passed directly into application logic.
 
+### Telegram authorization
+
+Until linked Telegram accounts are stored in PostgreSQL, the current MVP uses the
+required `TELEGRAM_ALLOWED_USER_IDS` setting as an account allowlist. Telegram
+handlers that mutate state accept only private-chat messages whose sender ID is
+in this allowlist. Messages without a sender and messages from groups,
+supergroups, or channels are not passed to application use cases.
+
+### Telegram webhook delivery
+
+The current MVP acknowledges a valid Telegram update before processing it. This
+keeps the webhook response independent of external API latency, but processing is
+only tracked in memory. If the process stops or an integration such as Singularity
+fails after the HTTP response, the update is not retried and the user may receive
+neither the requested result nor an error message. This is a known temporary
+reliability limitation.
+
+The in-memory implementation also has no application-level bound on queued or
+concurrently processed updates, and shutdown waits for all accepted update tasks
+without an application-level timeout. This is acceptable only for the current
+single-user MVP and is not the target design for higher load.
+
+When PostgreSQL-backed update processing is introduced, the webhook must durably
+record the update under a unique Telegram `update_id` before returning a
+successful HTTP response. Recording a new update and detecting an existing one
+must be atomic. A repeated `update_id` is acknowledged without running its use
+case again. A bounded worker pool must process stored updates with a finite
+shutdown grace period; unfinished work remains pending in PostgreSQL for a later
+retry. Processing can then retry transient failures outside the request and
+report a terminal failure to the user when possible. Adding PostgreSQL alone does
+not provide these guarantees; the durable write must be part of the webhook
+acknowledgement path.
+
 For example:
 
 ```text

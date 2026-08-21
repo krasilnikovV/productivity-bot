@@ -4,8 +4,11 @@ from contextlib import asynccontextmanager
 from aiogram import Bot, Dispatcher
 from fastapi import FastAPI
 
+from productivity_bot.adapters.singularity import SingularityAdapter, SingularityClient
+from productivity_bot.application.use_cases import CaptureTask
 from productivity_bot.config import Settings
 from productivity_bot.entrypoints.http.routers.health import router as health_router
+from productivity_bot.entrypoints.telegram.handlers import CaptureTaskHandler
 from productivity_bot.entrypoints.telegram.webhook import (
     TELEGRAM_WEBHOOK_PATH,
     TelegramWebhookHandler,
@@ -17,13 +20,31 @@ def create_app(
     *,
     bot: Bot | None = None,
     dispatcher: Dispatcher | None = None,
+    singularity_client: SingularityClient | None = None,
 ) -> FastAPI:
-    application_bot = bot if bot is not None else Bot(settings.telegram_bot_token)
+    application_bot = (
+        bot
+        if bot is not None
+        else Bot(settings.telegram_bot_token.get_secret_value())
+    )
     application_dispatcher = dispatcher if dispatcher is not None else Dispatcher()
+    application_singularity_client = (
+        singularity_client
+        if singularity_client is not None
+        else SingularityClient(settings.singularity_api_token.get_secret_value())
+    )
+    singularity_adapter = SingularityAdapter(application_singularity_client)
+    capture_task = CaptureTask(singularity_adapter)
+    capture_task_handler = CaptureTaskHandler(
+        capture_task,
+        allowed_user_ids=settings.telegram_allowed_user_ids,
+    )
+    application_dispatcher.include_router(capture_task_handler.router)
+    telegram_webhook_secret = settings.telegram_webhook_secret.get_secret_value()
     telegram_webhook = TelegramWebhookHandler(
         bot=application_bot,
         dispatcher=application_dispatcher,
-        webhook_secret=settings.telegram_webhook_secret,
+        webhook_secret=telegram_webhook_secret,
     )
 
     @asynccontextmanager
@@ -42,7 +63,7 @@ def create_app(
             if settings.webhook_base_url:
                 await application_bot.set_webhook(
                     url=(settings.webhook_base_url.rstrip("/") + TELEGRAM_WEBHOOK_PATH),
-                    secret_token=settings.telegram_webhook_secret,
+                    secret_token=telegram_webhook_secret,
                     allowed_updates=application_dispatcher.resolve_used_update_types(),
                 )
             yield
@@ -56,8 +77,11 @@ def create_app(
                         **workflow_data,
                     )
                 finally:
-                    # noinspection unresolved-references
-                    await application_bot.session.close()
+                    try:
+                        # noinspection unresolved-references
+                        await application_bot.session.close()
+                    finally:
+                        await application_singularity_client.aclose()
 
     application = FastAPI(title="Productivity Bot", lifespan=lifespan)
 

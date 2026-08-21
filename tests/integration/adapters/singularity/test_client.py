@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import httpx2
 import pytest
@@ -173,6 +174,27 @@ async def test_aclose_closes_transport() -> None:
     await client.aclose()
 
     assert transport.is_closed
+
+
+@pytest.mark.asyncio
+async def test_http_client_creation_is_deferred_until_async_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_clients: list[httpx2.AsyncClient] = []
+    original_async_client = httpx2.AsyncClient
+
+    def create_async_client(**kwargs: Any) -> httpx2.AsyncClient:
+        client = original_async_client(**kwargs)
+        created_clients.append(client)
+        return client
+
+    monkeypatch.setattr(httpx2, "AsyncClient", create_async_client)
+    client = SingularityClient("token", transport=TrackingTransport())
+
+    assert created_clients == []
+
+    async with client:
+        assert len(created_clients) == 1
 
 
 @pytest.mark.asyncio

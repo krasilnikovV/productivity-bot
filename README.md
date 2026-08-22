@@ -33,6 +33,15 @@ Install dependencies:
 uv sync
 ```
 
+Start the development PostgreSQL instance:
+
+```bash
+docker compose up -d --wait postgres
+```
+
+The database stores its data in `tmpfs`. Stopping the container removes all
+development data; the Compose configuration does not create a persistent volume.
+
 Create a local environment file and fill in the required values:
 
 ```bash
@@ -54,4 +63,10 @@ Run the checks:
 uv run pytest
 uv run ruff check .
 uv run mypy src
+```
+
+Stop the development services:
+
+```bash
+docker compose down
 ```

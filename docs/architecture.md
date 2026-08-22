@@ -270,16 +270,27 @@ concurrently processed updates, and shutdown waits for all accepted update tasks
 without an application-level timeout. This is acceptable only for the current
 single-user MVP and is not the target design for higher load.
 
-When PostgreSQL-backed update processing is introduced, the webhook must durably
-record the update under a unique Telegram `update_id` before returning a
+PostgreSQL will provide a durable inbox for Telegram updates. The webhook must
+record an update under its unique Telegram `update_id` before returning a
 successful HTTP response. Recording a new update and detecting an existing one
 must be atomic. A repeated `update_id` is acknowledged without running its use
-case again. A bounded worker pool must process stored updates with a finite
-shutdown grace period; unfinished work remains pending in PostgreSQL for a later
-retry. Processing can then retry transient failures outside the request and
-report a terminal failure to the user when possible. Adding PostgreSQL alone does
-not provide these guarantees; the durable write must be part of the webhook
-acknowledgement path.
+case again. If the database write fails, the webhook must return a non-successful
+response.
+
+A bounded worker pool processes stored updates with a finite shutdown grace
+period. External calls do not run inside the database transaction used to claim
+work. Pending work remains available after a restart.
+
+Automatic retry is allowed only when the external request is known not to have
+been sent, the operation is read-only, or the external mutation has a verified
+idempotency guarantee. If a non-idempotent mutation may have succeeded but its
+result is unknown, the update is marked `uncertain` and is not retried blindly.
+The same rule applies when recovering an abandoned worker claim after a crash.
+PostgreSQL deduplicates Telegram delivery but cannot make a remote Singularity
+mutation part of the same transaction.
+
+The processing guarantees and failure policy are defined in
+[ADR 0001](decisions/0001-use-postgresql-for-durable-telegram-update-processing.md).
 
 For example:
 
@@ -373,9 +384,21 @@ task_runtime_state
 
 user_preferences
 interaction_history
+
+telegram_update_inbox
+    update_id
+    payload
+    status
+    attempt_count
+    available_at
+    last_error
 ```
 
 The schema can change as implementation details become clearer.
+
+Development PostgreSQL runs in Docker Compose with its data directory mounted as
+`tmpfs`. It does not use a bind mount or persistent Docker volume. Production
+PostgreSQL uses durable storage.
 
 ### Calendar
 

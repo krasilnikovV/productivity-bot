@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from typing import Any, cast
@@ -138,7 +138,10 @@ class FakeSingularityClient:
 class TrackingMockTransport(httpx2.MockTransport):
     def __init__(
         self,
-        handler: Callable[[httpx2.Request], Awaitable[httpx2.Response]],
+        handler: Callable[
+            [httpx2.Request],
+            Coroutine[Any, Any, httpx2.Response],
+        ],
     ) -> None:
         super().__init__(handler)
         self.closed = False

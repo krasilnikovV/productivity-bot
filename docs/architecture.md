@@ -47,7 +47,7 @@ src/productivity_bot/
 │
 ├── adapters/
 │   ├── singularity/
-│   ├── persistence/
+│   ├── postgres/
 │   ├── calendar/
 │   └── llm/
 │
@@ -171,7 +171,7 @@ SingularityTaskRepository
 
 The application therefore knows how to work with tasks, but does not know how the Singularity API works.
 
-The same rule applies to persistence, Calendar, and LLM integrations.
+The same rule applies to PostgreSQL, Calendar, and LLM integrations.
 
 ## Adapters
 
@@ -223,11 +223,12 @@ LLM output must be validated before it changes external state.
 
 The application should not depend on a specific LLM provider.
 
-### Persistence
+### PostgreSQL
 
-The persistence adapter contains PostgreSQL and SQLAlchemy-specific code.
+The PostgreSQL adapter contains SQLAlchemy-specific code.
 
-SQLAlchemy models are persistence models and are not used directly as domain or application models.
+SQLAlchemy models are database models and are not used directly as domain or
+application models.
 
 PostgreSQL must not become a second task database.
 
@@ -244,7 +245,8 @@ They:
 3. call a use case;
 4. convert the result into a transport-specific response.
 
-They must not contain task ranking, persistence logic, Singularity API calls, or other business rules.
+They must not contain task ranking, database access, Singularity API calls, or
+other business rules.
 
 Transport models should not be passed directly into application logic.
 

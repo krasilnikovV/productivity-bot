@@ -48,6 +48,12 @@ Create a local environment file and fill in the required values:
 cp .env.example .env
 ```
 
+Apply database migrations:
+
+```bash
+uv run alembic upgrade head
+```
+
 Start the application:
 
 ```bash

@@ -30,10 +30,19 @@ class TelegramUpdateInboxModel(Base):
             "attempt_count >= 0",
             name="ck_telegram_update_inbox_attempt_count_non_negative",
         ),
+        CheckConstraint(
+            "status != 'processing' OR claimed_at IS NOT NULL",
+            name="ck_telegram_update_inbox_processing_has_claimed_at",
+        ),
         Index(
             "ix_telegram_update_inbox_ready",
             "status",
             "available_at",
+        ),
+        Index(
+            "ix_telegram_update_inbox_abandoned",
+            "status",
+            "claimed_at",
         ),
     )
 
@@ -54,6 +63,10 @@ class TelegramUpdateInboxModel(Base):
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_mutation_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
     )
     last_error: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime] = mapped_column(

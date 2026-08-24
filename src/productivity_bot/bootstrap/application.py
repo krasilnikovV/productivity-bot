@@ -3,8 +3,15 @@ from contextlib import asynccontextmanager
 
 from aiogram import Bot, Dispatcher
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    async_sessionmaker,
+    create_async_engine,
+)
 
+from productivity_bot.adapters.postgres import PostgresTelegramUpdateInboxRepository
 from productivity_bot.adapters.singularity import SingularityAdapter, SingularityClient
+from productivity_bot.application.ports import TelegramUpdateInboxRepository
 from productivity_bot.application.use_cases import CaptureTask
 from productivity_bot.config import Settings
 from productivity_bot.entrypoints.http.routers.health import router as health_router
@@ -21,6 +28,7 @@ def create_app(
     bot: Bot | None = None,
     dispatcher: Dispatcher | None = None,
     singularity_client: SingularityClient | None = None,
+    telegram_update_inbox_repository: TelegramUpdateInboxRepository | None = None,
 ) -> FastAPI:
     application_bot = (
         bot
@@ -33,6 +41,23 @@ def create_app(
         if singularity_client is not None
         else SingularityClient(settings.singularity_api_token.get_secret_value())
     )
+    application_database_engine: AsyncEngine | None = None
+    application_telegram_update_inbox_repository: TelegramUpdateInboxRepository
+    if telegram_update_inbox_repository is None:
+        application_database_engine = create_async_engine(
+            settings.database_url.get_secret_value(),
+        )
+        session_factory = async_sessionmaker(
+            application_database_engine,
+            expire_on_commit=False,
+        )
+        application_telegram_update_inbox_repository = (
+            PostgresTelegramUpdateInboxRepository(session_factory)
+        )
+    else:
+        application_telegram_update_inbox_repository = (
+            telegram_update_inbox_repository
+        )
     singularity_adapter = SingularityAdapter(application_singularity_client)
     capture_task = CaptureTask(singularity_adapter)
     capture_task_handler = CaptureTaskHandler(
@@ -45,6 +70,7 @@ def create_app(
         bot=application_bot,
         dispatcher=application_dispatcher,
         webhook_secret=telegram_webhook_secret,
+        update_inbox_repository=application_telegram_update_inbox_repository,
     )
 
     @asynccontextmanager
@@ -81,7 +107,11 @@ def create_app(
                         # noinspection unresolved-references
                         await application_bot.session.close()
                     finally:
-                        await application_singularity_client.aclose()
+                        try:
+                            await application_singularity_client.aclose()
+                        finally:
+                            if application_database_engine is not None:
+                                await application_database_engine.dispose()
 
     application = FastAPI(title="Productivity Bot", lifespan=lifespan)
 

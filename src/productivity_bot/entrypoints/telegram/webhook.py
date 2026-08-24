@@ -10,6 +10,8 @@ from fastapi import APIRouter, Header, HTTPException, Response, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
+from productivity_bot.application.ports import TelegramUpdateInboxRepository
+
 TELEGRAM_WEBHOOK_PATH = "/telegram/webhook"
 logger = logging.getLogger(__name__)
 
@@ -21,10 +23,12 @@ class TelegramWebhookHandler:
         bot: Bot,
         dispatcher: Dispatcher,
         webhook_secret: str,
+        update_inbox_repository: TelegramUpdateInboxRepository,
     ) -> None:
         self._bot = bot
         self._dispatcher = dispatcher
         self._webhook_secret = webhook_secret
+        self._update_inbox_repository = update_inbox_repository
         self._update_tasks: set[asyncio.Task[None]] = set()
         self.router = APIRouter(tags=["telegram"])
         self.router.add_api_route(
@@ -49,6 +53,15 @@ class TelegramWebhookHandler:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
         update = self._parse_update(update_data)
+        inserted = await self._update_inbox_repository.insert_update(
+            update.update_id,
+            update_data,
+        )
+        if not inserted:
+            return Response(status_code=status.HTTP_200_OK)
+
+        # TODO: Replace this in-memory path with the ADR 0001 worker. Inbox rows
+        # remain pending here, so a worker must not consume them while this path runs.
         task = asyncio.create_task(self._process_update(update))
         self._update_tasks.add(task)
         task.add_done_callback(self._update_tasks.discard)

@@ -260,28 +260,37 @@ supergroups, or channels are not passed to application use cases.
 
 ### Telegram webhook delivery
 
-The current MVP acknowledges a valid Telegram update before processing it. This
-keeps the webhook response independent of external API latency, but processing is
-only tracked in memory. If the process stops or an integration such as Singularity
-fails after the HTTP response, the update is not retried and the user may receive
-neither the requested result nor an error message. This is a known temporary
-reliability limitation.
+The current MVP durably accepts Telegram updates in this order:
 
-The in-memory implementation also has no application-level bound on queued or
-concurrently processed updates, and shutdown waits for all accepted update tasks
-without an application-level timeout. This is acceptable only for the current
-single-user MVP and is not the target design for higher load.
+1. authenticate the request and validate the update;
+2. atomically insert the raw payload under its Telegram `update_id`, or detect a
+   duplicate;
+3. finish the insert transaction;
+4. return an empty HTTP 200 response.
 
-PostgreSQL will provide a durable inbox for Telegram updates. The webhook must
-record an update under its unique Telegram `update_id` before returning a
-successful HTTP response. Recording a new update and detecting an existing one
-must be atomic. A repeated `update_id` is acknowledged without running its use
-case again. If the database write fails, the webhook must return a non-successful
-response.
+Only a newly inserted update starts the current in-memory processing task, and it
+starts after the insert transaction has closed. A repeated `update_id` receives
+HTTP 200 without running the handler again. An insert or commit failure propagates
+as HTTP 500 and does not start processing. The response does not wait for
+Singularity or Telegram API calls made by the in-memory task.
 
-A bounded worker pool processes stored updates with a finite shutdown grace
-period. External calls do not run inside the database transaction used to claim
-work. Pending work remains available after a restart.
+Durable acceptance does not yet provide durable processing. Every inserted row
+remains `pending` even when its in-memory task succeeds. The inbox therefore must
+not be consumed as a backlog while the current in-memory path is active: doing so
+could repeat an already completed non-idempotent external mutation. The bounded
+worker described in ADR 0001 must replace this path and own claiming updates,
+recording the start of an external mutation, and persisting the final outcome
+before pending-update recovery is enabled.
+
+Until that worker is implemented, a committed update can remain `pending` after
+a process stop without being picked up again. In-memory processing also has no
+application-level bound on queued or concurrently processed updates, and shutdown
+waits for all started update tasks without an application-level timeout. This is
+a known temporary limitation of the current single-user MVP.
+
+The target worker pool will process stored updates with a finite shutdown grace
+period. External calls will not run inside the database transaction used to claim
+work, and pending work will remain available after a restart.
 
 Automatic retry is allowed only when the external request is known not to have
 been sent, the operation is read-only, or the external mutation has a verified

@@ -11,9 +11,13 @@ dependencies = [
     "httpx2>=2.10.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.15.0",
-    "sqlalchemy==2.0.51",
+    "sqlalchemy[asyncio]==2.0.51",
     "uvicorn[standard]>=0.52.1",
 ]
+
+[project.scripts]
+productivity-bot = "productivity_bot.main:main"
+productivity-bot-telegram-update-worker = "productivity_bot.telegram_update_worker:main"
 
 [dependency-groups]
 dev = [

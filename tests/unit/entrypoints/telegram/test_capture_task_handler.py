@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from aiogram.enums import ChatType
@@ -11,15 +11,21 @@ from productivity_bot.entrypoints.telegram.handlers.capture_task import (
     CaptureTaskHandler,
     is_authorized_task_capture_message,
 )
+from productivity_bot.entrypoints.telegram.update_worker import (
+    TelegramUpdateProcessingAttempt,
+)
 
 ALLOWED_USER_IDS = frozenset({123})
 
 
 class FakeTaskRepository:
-    def __init__(self) -> None:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events
         self.created_titles: list[str] = []
 
     async def create_task(self, title: str) -> Task:
+        if self.events is not None:
+            self.events.append("create_task")
         self.created_titles.append(title)
         return Task(id="T-123", title=title)
 
@@ -28,6 +34,17 @@ class FakeTaskRepository:
 
     async def complete_task(self, task_id: str) -> None:
         return None
+
+
+class FakeProcessingAttempt:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events
+        self.marker_calls = 0
+
+    async def mark_external_mutation_started(self) -> None:
+        self.marker_calls += 1
+        if self.events is not None:
+            self.events.append("mutation_marker")
 
 
 def make_message(
@@ -101,8 +118,33 @@ async def test_handler_rejects_message_without_text() -> None:
         CaptureTask(repository),
         allowed_user_ids=ALLOWED_USER_IDS,
     )
+    processing_attempt = FakeProcessingAttempt()
 
     with pytest.raises(ValueError, match="Task capture message must contain text"):
-        await handler.handle(make_message(None))
+        await handler.handle(
+            make_message(None),
+            cast(TelegramUpdateProcessingAttempt, processing_attempt),
+        )
 
     assert repository.created_titles == []
+    assert processing_attempt.marker_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_handler_records_marker_immediately_before_capture() -> None:
+    events: list[str] = []
+    repository = FakeTaskRepository(events)
+    handler = CaptureTaskHandler(
+        CaptureTask(repository),
+        allowed_user_ids=ALLOWED_USER_IDS,
+    )
+    processing_attempt = FakeProcessingAttempt(events)
+
+    result = await handler.handle(
+        make_message("  Buy groceries  "),
+        cast(TelegramUpdateProcessingAttempt, processing_attempt),
+    )
+
+    assert events == ["mutation_marker", "create_task"]
+    assert repository.created_titles == ["Buy groceries"]
+    assert result.text == "Task captured"

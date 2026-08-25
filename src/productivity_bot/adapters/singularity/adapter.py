@@ -1,10 +1,22 @@
-from productivity_bot.adapters.singularity.client import SingularityClient
+from pydantic import ValidationError
+
+from productivity_bot.adapters.singularity.client import (
+    SingularityApiError,
+    SingularityClient,
+    SingularityClientError,
+    SingularityRequestNotSentError,
+)
 from productivity_bot.adapters.singularity.mapper import map_task
 from productivity_bot.adapters.singularity.schemas import (
     CompleteTaskRequest,
     CreateTaskRequest,
     TaskListResponse,
     TaskResponse,
+)
+from productivity_bot.application.ports import (
+    TaskMutationConfirmedError,
+    TaskMutationNotAppliedError,
+    TaskMutationOutcomeUnknownError,
 )
 from productivity_bot.domain.entities import Task
 
@@ -19,12 +31,37 @@ class SingularityAdapter:
 
     async def create_task(self, title: str) -> Task:
         request = CreateTaskRequest(title=title)
-        response = await self._client.request(
-            "POST",
-            "task",
-            json=request.model_dump(mode="json"),
-        )
-        task = TaskResponse.model_validate(response.json())
+        try:
+            response = await self._client.request(
+                "POST",
+                "task",
+                json=request.model_dump(mode="json"),
+            )
+        except SingularityRequestNotSentError as error:
+            raise TaskMutationNotAppliedError(
+                "Singularity task creation request was not sent",
+                retryable=True,
+            ) from error
+        except SingularityApiError as error:
+            if 400 <= error.status_code < 500:
+                raise TaskMutationNotAppliedError(
+                    "Singularity rejected task creation",
+                    retryable=False,
+                ) from error
+            raise TaskMutationOutcomeUnknownError(
+                "Singularity task creation outcome is unknown"
+            ) from error
+        except SingularityClientError as error:
+            raise TaskMutationOutcomeUnknownError(
+                "Singularity task creation outcome is unknown"
+            ) from error
+
+        try:
+            task = TaskResponse.model_validate(response.json())
+        except (ValueError, ValidationError) as error:
+            raise TaskMutationConfirmedError(
+                "Singularity confirmed task creation but returned an invalid response"
+            ) from error
         return map_task(task)
 
     async def list_active_tasks(self) -> list[Task]:

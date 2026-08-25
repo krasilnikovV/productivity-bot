@@ -7,6 +7,7 @@ import pytest
 from productivity_bot.adapters.singularity import (
     SingularityApiError,
     SingularityClient,
+    SingularityRequestNotSentError,
     SingularityTimeoutError,
     SingularityTransportError,
 )
@@ -110,6 +111,29 @@ async def test_request_converts_transport_errors(
             await client.request("GET", "task")
 
     assert error_info.value.__cause__ is transport_error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transport_error",
+    [
+        httpx2.ConnectError("connection failed"),
+        httpx2.ConnectTimeout("connection timed out"),
+        httpx2.PoolTimeout("connection pool timed out"),
+    ],
+)
+async def test_request_identifies_transport_errors_before_send(
+    transport_error: httpx2.RequestError,
+) -> None:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        raise transport_error
+
+    async with SingularityClient(
+        "token",
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        with pytest.raises(SingularityRequestNotSentError):
+            await client.request("POST", "task", json={"title": "Title"})
 
 
 @pytest.mark.parametrize("api_token", ["", " ", "\t\n"])

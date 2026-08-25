@@ -1,7 +1,7 @@
 import re
 from functools import lru_cache
 
-from pydantic import Field, PositiveInt, SecretStr, field_validator
+from pydantic import Field, PositiveFloat, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     singularity_api_token: SecretStr
     database_url: SecretStr
     webhook_base_url: str = ""
+    telegram_update_worker_concurrency: PositiveInt = 4
+    telegram_update_worker_poll_interval_seconds: PositiveFloat = 1.0
+    telegram_update_worker_claim_timeout_seconds: PositiveFloat = 300.0
+    telegram_update_worker_recovery_interval_seconds: PositiveFloat = 30.0
+    telegram_update_worker_shutdown_grace_period_seconds: PositiveFloat = 10.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

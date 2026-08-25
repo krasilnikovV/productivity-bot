@@ -16,6 +16,10 @@ class SingularityTransportError(SingularityClientError):
     """Raised when a Singularity request fails at the transport layer."""
 
 
+class SingularityRequestNotSentError(SingularityTransportError):
+    """Raised when the transport proves that no request was sent."""
+
+
 class SingularityTimeoutError(SingularityTransportError):
     """Raised when a Singularity request times out."""
 
@@ -73,6 +77,14 @@ class SingularityClient:
                 params=params,
                 json=json,
             )
+        except (
+            httpx2.ConnectError,
+            httpx2.ConnectTimeout,
+            httpx2.PoolTimeout,
+        ) as exc:
+            raise SingularityRequestNotSentError(
+                "Singularity API request was not sent"
+            ) from exc
         except httpx2.TimeoutException as exc:
             raise SingularityTimeoutError("Singularity API request timed out") from exc
         except httpx2.RequestError as exc:

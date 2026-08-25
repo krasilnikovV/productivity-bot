@@ -30,6 +30,11 @@ def test_webhook_base_url_defaults_to_empty(
     )
 
     assert settings.webhook_base_url == ""
+    assert settings.telegram_update_worker_concurrency == 4
+    assert settings.telegram_update_worker_poll_interval_seconds == 1.0
+    assert settings.telegram_update_worker_claim_timeout_seconds == 300.0
+    assert settings.telegram_update_worker_recovery_interval_seconds == 30.0
+    assert settings.telegram_update_worker_shutdown_grace_period_seconds == 10.0
 
 
 def test_get_settings_loads_values_from_environment(
@@ -44,6 +49,14 @@ def test_get_settings_loads_values_from_environment(
         "postgresql+asyncpg://env-user:env-password@localhost/env-database",
     )
     monkeypatch.setenv("WEBHOOK_BASE_URL", "https://test.example.com")
+    monkeypatch.setenv("TELEGRAM_UPDATE_WORKER_CONCURRENCY", "7")
+    monkeypatch.setenv("TELEGRAM_UPDATE_WORKER_POLL_INTERVAL_SECONDS", "0.25")
+    monkeypatch.setenv("TELEGRAM_UPDATE_WORKER_CLAIM_TIMEOUT_SECONDS", "600")
+    monkeypatch.setenv("TELEGRAM_UPDATE_WORKER_RECOVERY_INTERVAL_SECONDS", "45")
+    monkeypatch.setenv(
+        "TELEGRAM_UPDATE_WORKER_SHUTDOWN_GRACE_PERIOD_SECONDS",
+        "12.5",
+    )
 
     settings = get_settings()
 
@@ -55,6 +68,11 @@ def test_get_settings_loads_values_from_environment(
         "postgresql+asyncpg://env-user:env-password@localhost/env-database"
     )
     assert settings.webhook_base_url == "https://test.example.com"
+    assert settings.telegram_update_worker_concurrency == 7
+    assert settings.telegram_update_worker_poll_interval_seconds == 0.25
+    assert settings.telegram_update_worker_claim_timeout_seconds == 600.0
+    assert settings.telegram_update_worker_recovery_interval_seconds == 45.0
+    assert settings.telegram_update_worker_shutdown_grace_period_seconds == 12.5
 
 
 def test_settings_repr_masks_secrets() -> None:
@@ -159,3 +177,31 @@ def test_telegram_allowed_user_ids_rejects_invalid_values(
             database_url="postgresql+asyncpg://test:test@localhost/test",
             _env_file=None,
         )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "telegram_update_worker_concurrency",
+        "telegram_update_worker_poll_interval_seconds",
+        "telegram_update_worker_claim_timeout_seconds",
+        "telegram_update_worker_recovery_interval_seconds",
+        "telegram_update_worker_shutdown_grace_period_seconds",
+    ],
+)
+@pytest.mark.parametrize("invalid_value", [0, -1])
+def test_worker_settings_reject_non_positive_values(
+    field_name: str,
+    invalid_value: int,
+) -> None:
+    values = {
+        "telegram_bot_token": "test-telegram-token",
+        "telegram_allowed_user_ids": frozenset({123}),
+        "telegram_webhook_secret": "test_webhook_secret",
+        "singularity_api_token": "test-singularity-token",
+        "database_url": "postgresql+asyncpg://test:test@localhost/test",
+        field_name: invalid_value,
+    }
+
+    with pytest.raises(ValidationError):
+        Settings(**values, _env_file=None)

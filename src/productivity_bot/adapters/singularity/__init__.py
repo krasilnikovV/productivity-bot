@@ -3,6 +3,7 @@ from productivity_bot.adapters.singularity.client import (
     SingularityApiError,
     SingularityClient,
     SingularityClientError,
+    SingularityRequestNotSentError,
     SingularityTimeoutError,
     SingularityTransportError,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "SingularityApiError",
     "SingularityClient",
     "SingularityClientError",
+    "SingularityRequestNotSentError",
     "SingularityTimeoutError",
     "SingularityTransportError",
 ]

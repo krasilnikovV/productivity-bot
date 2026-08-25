@@ -268,29 +268,61 @@ The current MVP durably accepts Telegram updates in this order:
 3. finish the insert transaction;
 4. return an empty HTTP 200 response.
 
-Only a newly inserted update starts the current in-memory processing task, and it
-starts after the insert transaction has closed. A repeated `update_id` receives
-HTTP 200 without running the handler again. An insert or commit failure propagates
-as HTTP 500 and does not start processing. The response does not wait for
-Singularity or Telegram API calls made by the in-memory task.
+A repeated `update_id` receives HTTP 200 without running the handler again. An
+insert or commit failure propagates as HTTP 500. HTTP 200 means durable
+acceptance, not completed processing. The webhook does not call the aiogram
+dispatcher and does not create an in-memory processing task.
 
-Durable acceptance does not yet provide durable processing. Every inserted row
-remains `pending` even when its in-memory task succeeds. The inbox therefore must
-not be consumed as a backlog while the current in-memory path is active: doing so
-could repeat an already completed non-idempotent external mutation. The bounded
-worker described in ADR 0001 must replace this path and own claiming updates,
-recording the start of an external mutation, and persisting the final outcome
-before pending-update recovery is enabled.
+The HTTP receiver and update worker run as separate operating-system processes.
+The HTTP process owns FastAPI, webhook registration, a Telegram bot session, and
+its PostgreSQL engine. The worker process separately owns the dispatcher,
+handlers, application use cases, Singularity client, Telegram bot session, and
+its PostgreSQL engine. Restarting or scaling one process type does not change the
+lifecycle or concurrency of the other.
 
-Until that worker is implemented, a committed update can remain `pending` after
-a process stop without being picked up again. In-memory processing also has no
-application-level bound on queued or concurrently processed updates, and shutdown
-waits for all started update tasks without an application-level timeout. This is
-a known temporary limitation of the current single-user MVP.
+Each worker process starts a fixed number of processing loops. Every loop claims
+at most one ready `pending` row using `FOR UPDATE SKIP LOCKED`, commits the claim,
+and processes that update before requesting another one. External calls do not
+run inside the claim transaction. Total processing concurrency is the configured
+per-process concurrency multiplied by the number of worker processes. Updates
+may complete in a different order from their arrival order.
 
-The target worker pool will process stored updates with a finite shutdown grace
-period. External calls will not run inside the database transaction used to claim
-work, and pending work will remain available after a restart.
+The worker parses the stored payload and routes it through aiogram. Unsupported,
+ignored, and authorization-rejected updates are consumed as `succeeded` without
+an external mutation marker. A mutating handler completes authorization and
+deterministic input checks before it commits
+`external_mutation_started_at`, immediately before calling the application use
+case that can mutate Singularity. If the marker cannot be committed, the use case
+is not called and the attempt is safely rescheduled when possible.
+
+The Singularity adapter reports whether a mutation is known not to have been
+applied, is confirmed, or has an unknown outcome. A known rejection is terminal
+`failed`; a proven pre-send transport failure can return to `pending`; and an
+unknown non-idempotent outcome becomes `uncertain`. A confirmed mutation is
+recorded as `succeeded` before a returned Telegram method is sent. Telegram reply
+delivery is best effort, and a reply failure does not change the terminal inbox
+state. Every transition includes the current `attempt_count`, so an old worker
+cannot overwrite a recovered or reclaimed attempt. Transient failures while
+persisting a known processing result are retried with the same attempt fence;
+the worker does not discard the result and continue claiming updates.
+
+Recovery runs once during worker startup and then at the configured interval. An
+expired `processing` claim without a mutation marker returns to `pending`; one
+with a marker becomes `uncertain`. Fresh claims are unchanged. An initial recovery
+failure terminates the worker process but does not stop the HTTP process from
+accepting updates.
+
+During shutdown, the worker stops taking new claims and wakes idle loops. It lets
+in-flight handlers finish only within the configured grace period, then cancels
+the remaining processing loops before the dispatcher, shared HTTP clients, and
+database engine are closed. A cancelled marked attempt remains `processing` for
+the next recovery pass.
+
+The HTTP and worker processes must run under external supervision. HTTP health
+describes only the web process, so worker liveness is monitored separately. Queue
+monitoring must cover pending depth, oldest pending age, and the number of
+`uncertain` updates. Worker replicas and web replicas each create independent
+PostgreSQL connection pools.
 
 Automatic retry is allowed only when the external request is known not to have
 been sent, the operation is read-only, or the external mutation has a verified
@@ -302,6 +334,11 @@ mutation part of the same transaction.
 
 The processing guarantees and failure policy are defined in
 [ADR 0001](decisions/0001-use-postgresql-for-durable-telegram-update-processing.md).
+
+Before the first rollout of this worker, the inbox must contain no legacy
+`pending` rows created by the previous in-memory implementation. Such rows may
+already have performed an external mutation. They require manual review; the
+worker does not migrate them automatically.
 
 For example:
 

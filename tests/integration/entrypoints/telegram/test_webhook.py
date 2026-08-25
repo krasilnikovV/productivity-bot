@@ -1,19 +1,13 @@
 import asyncio
-import json
-from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from typing import Any, cast
 
-import httpx2
 import pytest
-from aiogram import Bot, Dispatcher, Router
-from aiogram.methods import SendMessage, TelegramMethod
-from aiogram.types import Update
+from aiogram import Bot
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from productivity_bot.adapters.singularity import SingularityClient
 from productivity_bot.application.ports import TelegramUpdateInboxRepository
 from productivity_bot.bootstrap import application as application_module
 from productivity_bot.bootstrap.application import create_app
@@ -65,79 +59,6 @@ class FakeBot:
         return True
 
 
-class FakeDispatcher:
-    def __init__(
-        self,
-        events: list[str],
-        *,
-        feed_update_result: TelegramMethod | None = None,
-        feed_update_release: Event | None = None,
-        shutdown_error: Exception | None = None,
-    ) -> None:
-        self.events = events
-        self._dispatcher = Dispatcher()
-        self.workflow_data = {"dependency": "dispatcher-context"}
-        self.feed_update_result = feed_update_result
-        self.feed_update_release = feed_update_release
-        self.shutdown_error = shutdown_error
-        self.feed_update_calls: list[tuple[object, Update]] = []
-        self.silent_call_requests: list[tuple[object, TelegramMethod]] = []
-        self.startup_calls: list[dict[str, object]] = []
-        self.shutdown_calls: list[dict[str, object]] = []
-        self.included_routers: list[Router] = []
-        self.allowed_updates: list[str] = []
-
-    def include_router(self, router: Router) -> Router:
-        self.included_routers.append(router)
-        return self._dispatcher.include_router(router)
-
-    async def feed_update(
-        self,
-        bot: object,
-        update: Update,
-    ) -> Any:
-        self.events.append("feed_update")
-        self.feed_update_calls.append((bot, update))
-        if self.feed_update_release is not None:
-            await asyncio.to_thread(self.feed_update_release.wait)
-        if self.feed_update_result is not None:
-            return self.feed_update_result
-        if update.message is None:
-            return None
-        return await self._dispatcher.feed_update(cast(Bot, bot), update)
-
-    async def silent_call_request(
-        self,
-        bot: object,
-        result: TelegramMethod,
-    ) -> None:
-        self.silent_call_requests.append((bot, result))
-
-    async def emit_startup(self, **kwargs: object) -> None:
-        self.events.append("startup")
-        self.startup_calls.append(kwargs)
-
-    async def emit_shutdown(self, **kwargs: object) -> None:
-        self.events.append("shutdown")
-        self.shutdown_calls.append(kwargs)
-        if self.shutdown_error is not None:
-            raise self.shutdown_error
-
-    def resolve_used_update_types(self) -> list[str]:
-        self.allowed_updates = self._dispatcher.resolve_used_update_types()
-        return self.allowed_updates
-
-
-class FakeSingularityClient:
-    def __init__(self, events: list[str]) -> None:
-        self.events = events
-        self.closed = False
-
-    async def aclose(self) -> None:
-        self.events.append("singularity_close")
-        self.closed = True
-
-
 class FakeTelegramUpdateInboxRepository:
     def __init__(
         self,
@@ -159,21 +80,18 @@ class FakeTelegramUpdateInboxRepository:
         update_id: int,
         payload: dict[str, Any],
     ) -> bool:
-        self.events.append("insert_start")
-        self.insert_started.set()
         self.insert_calls.append((update_id, payload))
-
+        self.insert_started.set()
+        if self.insert_release is not None:
+            await asyncio.to_thread(self.insert_release.wait)
+        if self.insert_error is not None:
+            raise self.insert_error
         async with self._insert_lock:
-            if self.insert_release is not None:
-                await asyncio.to_thread(self.insert_release.wait)
-            if self.insert_error is not None:
-                raise self.insert_error
-
-            inserted = update_id not in self.stored_updates
-            if inserted:
-                self.stored_updates[update_id] = payload
-            self.events.append("insert_done")
-            return inserted
+            if update_id in self.stored_updates:
+                return False
+            self.stored_updates[update_id] = payload
+            self.events.append("insert_committed")
+            return True
 
 
 class FakeDatabaseEngine:
@@ -186,28 +104,12 @@ class FakeDatabaseEngine:
         self.disposed = True
 
 
-class TrackingMockTransport(httpx2.MockTransport):
-    def __init__(
-        self,
-        handler: Callable[
-            [httpx2.Request],
-            Coroutine[Any, Any, httpx2.Response],
-        ],
-    ) -> None:
-        super().__init__(handler)
-        self.closed = False
-
-    async def aclose(self) -> None:
-        self.closed = True
-        await super().aclose()
-
-
 def make_settings(*, webhook_base_url: str = "") -> Settings:
     return Settings(
         telegram_bot_token="123456:test-token",
         telegram_allowed_user_ids=frozenset({123}),
         telegram_webhook_secret=WEBHOOK_SECRET,
-        singularity_api_token="test-singularity-token",
+        singularity_api_token="not-used-by-http-process",
         database_url="postgresql+asyncpg://test:test@localhost/test",
         webhook_base_url=webhook_base_url,
         _env_file=None,
@@ -217,18 +119,13 @@ def make_settings(*, webhook_base_url: str = "") -> Settings:
 def make_app(
     *,
     webhook_base_url: str = "",
-    feed_update_result: TelegramMethod | None = None,
-    feed_update_release: Event | None = None,
+    insert_release: Event | None = None,
+    insert_error: Exception | None = None,
     set_webhook_error: Exception | None = None,
-    shutdown_error: Exception | None = None,
     session_close_error: Exception | None = None,
-    singularity_client: SingularityClient | None = None,
-    inbox_insert_release: Event | None = None,
-    inbox_insert_error: Exception | None = None,
 ) -> tuple[
     FastAPI,
     FakeBot,
-    FakeDispatcher,
     FakeTelegramUpdateInboxRepository,
     list[str],
 ]:
@@ -238,43 +135,28 @@ def make_app(
         set_webhook_error=set_webhook_error,
         session_close_error=session_close_error,
     )
-    dispatcher = FakeDispatcher(
+    repository = FakeTelegramUpdateInboxRepository(
         events,
-        feed_update_result=feed_update_result,
-        feed_update_release=feed_update_release,
-        shutdown_error=shutdown_error,
+        insert_release=insert_release,
+        insert_error=insert_error,
     )
-    application_singularity_client = (
-        singularity_client
-        if singularity_client is not None
-        else cast(SingularityClient, FakeSingularityClient(events))
-    )
-    inbox_repository = FakeTelegramUpdateInboxRepository(
-        events,
-        insert_release=inbox_insert_release,
-        insert_error=inbox_insert_error,
-    )
-    # noinspection invalid-cast
     app = create_app(
         make_settings(webhook_base_url=webhook_base_url),
         bot=cast(Bot, bot),
-        dispatcher=cast(Dispatcher, dispatcher),
-        singularity_client=application_singularity_client,
         telegram_update_inbox_repository=cast(
             TelegramUpdateInboxRepository,
-            inbox_repository,
+            repository,
         ),
     )
-    return app, bot, dispatcher, inbox_repository, events
+    return app, bot, repository, events
 
 
 @pytest.mark.filterwarnings(
     "error::pydantic.warnings.UnsupportedFieldAttributeWarning",
 )
-def test_webhook_dispatches_valid_update() -> None:
-    app, bot, dispatcher, inbox_repository, events = make_app()
-
-    payload = {"update_id": 42, "source": {"raw": True}}
+def test_webhook_durably_accepts_update_while_no_worker_is_running() -> None:
+    app, _, repository, events = make_app()
+    payload = {"update_id": 42}
 
     with TestClient(app) as client:
         response = client.post(
@@ -285,21 +167,13 @@ def test_webhook_dispatches_valid_update() -> None:
 
     assert response.status_code == 200
     assert response.content == b""
-    assert inbox_repository.insert_calls == [(42, payload)]
-    assert inbox_repository.stored_updates == {42: payload}
-    assert events.index("insert_done") < events.index("feed_update")
-    assert len(dispatcher.feed_update_calls) == 1
-    dispatched_bot, dispatched_update = dispatcher.feed_update_calls[0]
-    assert dispatched_bot is bot
-    assert dispatched_update.update_id == 42
-    assert dispatched_update.bot is bot
+    assert repository.stored_updates == {42: payload}
+    assert events == ["insert_committed", "session_close"]
 
 
-def test_webhook_waits_for_update_insert_before_acknowledging() -> None:
+def test_webhook_waits_for_commit_before_acknowledging() -> None:
     insert_release = Event()
-    app, _, dispatcher, inbox_repository, _ = make_app(
-        inbox_insert_release=insert_release,
-    )
+    app, _, repository, _ = make_app(insert_release=insert_release)
 
     with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as executor:
         response_future = executor.submit(
@@ -309,7 +183,7 @@ def test_webhook_waits_for_update_insert_before_acknowledging() -> None:
             json={"update_id": 42},
         )
         try:
-            assert inbox_repository.insert_started.wait(timeout=1)
+            assert repository.insert_started.wait(timeout=1)
             with pytest.raises(TimeoutError):
                 response_future.result(timeout=0.1)
         finally:
@@ -317,11 +191,10 @@ def test_webhook_waits_for_update_insert_before_acknowledging() -> None:
         response = response_future.result(timeout=1)
 
     assert response.status_code == 200
-    assert len(dispatcher.feed_update_calls) == 1
 
 
-def test_webhook_acknowledges_duplicate_without_dispatching_it_again() -> None:
-    app, _, dispatcher, inbox_repository, _ = make_app()
+def test_webhook_acknowledges_duplicate_and_preserves_original_payload() -> None:
+    app, _, repository, _ = make_app()
     original_payload = {"update_id": 42, "source": "original"}
     duplicate_payload = {"update_id": 42, "source": "duplicate"}
 
@@ -339,44 +212,12 @@ def test_webhook_acknowledges_duplicate_without_dispatching_it_again() -> None:
 
     assert original_response.status_code == 200
     assert duplicate_response.status_code == 200
-    assert inbox_repository.insert_calls == [
-        (42, original_payload),
-        (42, duplicate_payload),
-    ]
-    assert inbox_repository.stored_updates == {42: original_payload}
-    assert len(dispatcher.feed_update_calls) == 1
+    assert repository.stored_updates == {42: original_payload}
 
 
-def test_webhook_concurrent_duplicate_is_dispatched_once() -> None:
-    app, _, dispatcher, inbox_repository, _ = make_app()
-    payloads = (
-        {"update_id": 42, "source": "first"},
-        {"update_id": 42, "source": "second"},
-    )
-
-    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as executor:
-        response_futures = [
-            executor.submit(
-                client.post,
-                "/telegram/webhook",
-                headers=WEBHOOK_HEADERS,
-                json=payload,
-            )
-            for payload in payloads
-        ]
-        responses = [future.result(timeout=1) for future in response_futures]
-
-    assert [response.status_code for response in responses] == [200, 200]
-    assert len(inbox_repository.insert_calls) == 2
-    assert {update_id for update_id, _ in inbox_repository.insert_calls} == {42}
-    assert len(inbox_repository.stored_updates) == 1
-    assert inbox_repository.stored_updates[42] in payloads
-    assert len(dispatcher.feed_update_calls) == 1
-
-
-def test_webhook_returns_500_without_dispatching_when_update_insert_fails() -> None:
-    app, _, dispatcher, inbox_repository, _ = make_app(
-        inbox_insert_error=RuntimeError("database unavailable"),
+def test_webhook_returns_500_when_insert_fails() -> None:
+    app, _, repository, _ = make_app(
+        insert_error=RuntimeError("database unavailable")
     )
 
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -387,195 +228,12 @@ def test_webhook_returns_500_without_dispatching_when_update_insert_fails() -> N
         )
 
     assert response.status_code == 500
-    assert inbox_repository.insert_calls == [(42, {"update_id": 42})]
-    assert dispatcher.feed_update_calls == []
-
-
-def test_webhook_acknowledges_before_update_processing_finishes() -> None:
-    feed_update_release = Event()
-    app, _, dispatcher, _, _ = make_app(feed_update_release=feed_update_release)
-
-    with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as executor:
-        response_future = executor.submit(
-            client.post,
-            "/telegram/webhook",
-            headers=WEBHOOK_HEADERS,
-            json={"update_id": 42},
-        )
-        try:
-            response = response_future.result(timeout=1)
-        finally:
-            feed_update_release.set()
-
-    assert response.status_code == 200
-    assert len(dispatcher.feed_update_calls) == 1
-
-
-def test_webhook_executes_returned_telegram_method() -> None:
-    telegram_method = SendMessage(chat_id=123, text="Task captured")
-    app, bot, dispatcher, _, _ = make_app(feed_update_result=telegram_method)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/telegram/webhook",
-            headers=WEBHOOK_HEADERS,
-            json={"update_id": 42},
-        )
-
-    assert response.status_code == 200
-    assert dispatcher.silent_call_requests == [(bot, telegram_method)]
-
-
-def test_webhook_captures_text_message_in_singularity_and_confirms() -> None:
-    singularity_requests: list[httpx2.Request] = []
-
-    async def singularity_handler(request: httpx2.Request) -> httpx2.Response:
-        singularity_requests.append(request)
-        return httpx2.Response(
-            201,
-            json={"id": "T-123", "title": "Buy groceries"},
-        )
-
-    transport = TrackingMockTransport(singularity_handler)
-    singularity_client = SingularityClient(
-        "injected-token",
-        transport=transport,
-    )
-    app, bot, dispatcher, _, _ = make_app(singularity_client=singularity_client)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/telegram/webhook",
-            headers=WEBHOOK_HEADERS,
-            json={
-                "update_id": 42,
-                "message": {
-                    "message_id": 7,
-                    "date": 1_754_000_000,
-                    "from": {
-                        "id": 123,
-                        "is_bot": False,
-                        "first_name": "Test user",
-                    },
-                    "chat": {"id": 123, "type": "private"},
-                    "text": "Buy groceries",
-                },
-            },
-        )
-
-    assert response.status_code == 200
-    assert len(singularity_requests) == 1
-    singularity_request = singularity_requests[0]
-    assert singularity_request.method == "POST"
-    assert singularity_request.url == "https://api.singularity-app.com/v2/task"
-    assert json.loads(singularity_request.content) == {"title": "Buy groceries"}
-    assert len(dispatcher.silent_call_requests) == 1
-    sent_bot, telegram_method = dispatcher.silent_call_requests[0]
-    assert sent_bot is bot
-    assert isinstance(telegram_method, SendMessage)
-    assert telegram_method.chat_id == 123
-    assert telegram_method.text == "Task captured"
-    assert transport.closed is True
-
-
-def test_webhook_ignores_non_text_message() -> None:
-    singularity_requests: list[httpx2.Request] = []
-
-    async def singularity_handler(request: httpx2.Request) -> httpx2.Response:
-        singularity_requests.append(request)
-        return httpx2.Response(500)
-
-    transport = TrackingMockTransport(singularity_handler)
-    singularity_client = SingularityClient(
-        "injected-token",
-        transport=transport,
-    )
-    app, _, dispatcher, _, _ = make_app(singularity_client=singularity_client)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/telegram/webhook",
-            headers=WEBHOOK_HEADERS,
-            json={
-                "update_id": 42,
-                "message": {
-                    "message_id": 7,
-                    "date": 1_754_000_000,
-                    "chat": {"id": 123, "type": "private"},
-                    "photo": [
-                        {
-                            "file_id": "photo-id",
-                            "file_unique_id": "photo-unique-id",
-                            "width": 100,
-                            "height": 100,
-                        }
-                    ],
-                },
-            },
-        )
-
-    assert response.status_code == 200
-    assert singularity_requests == []
-    assert dispatcher.silent_call_requests == []
-    assert transport.closed is True
-
-
-@pytest.mark.parametrize(
-    ("sender_id", "chat_id", "chat_type"),
-    [
-        pytest.param(456, 456, "private", id="unlinked-user"),
-        pytest.param(123, -100, "group", id="group-chat"),
-    ],
-)
-def test_webhook_does_not_capture_unauthorized_message(
-    sender_id: int,
-    chat_id: int,
-    chat_type: str,
-) -> None:
-    singularity_requests: list[httpx2.Request] = []
-
-    async def singularity_handler(request: httpx2.Request) -> httpx2.Response:
-        singularity_requests.append(request)
-        return httpx2.Response(500)
-
-    transport = TrackingMockTransport(singularity_handler)
-    singularity_client = SingularityClient(
-        "injected-token",
-        transport=transport,
-    )
-    app, _, dispatcher, _, _ = make_app(singularity_client=singularity_client)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/telegram/webhook",
-            headers=WEBHOOK_HEADERS,
-            json={
-                "update_id": 42,
-                "message": {
-                    "message_id": 7,
-                    "date": 1_754_000_000,
-                    "from": {
-                        "id": sender_id,
-                        "is_bot": False,
-                        "first_name": "Test user",
-                    },
-                    "chat": {"id": chat_id, "type": chat_type},
-                    "text": "Buy groceries",
-                },
-            },
-        )
-
-    assert response.status_code == 200
-    assert singularity_requests == []
-    assert dispatcher.silent_call_requests == []
-    assert transport.closed is True
+    assert repository.stored_updates == {}
 
 
 @pytest.mark.parametrize("secret", [None, "incorrect_secret"])
-def test_webhook_rejects_missing_or_incorrect_secret(
-    secret: str | None,
-) -> None:
-    app, _, dispatcher, inbox_repository, _ = make_app()
+def test_webhook_rejects_missing_or_incorrect_secret(secret: str | None) -> None:
+    app, _, repository, _ = make_app()
     headers = {} if secret is None else {"X-Telegram-Bot-Api-Secret-Token": secret}
 
     with TestClient(app) as client:
@@ -586,12 +244,11 @@ def test_webhook_rejects_missing_or_incorrect_secret(
         )
 
     assert response.status_code == 401
-    assert inbox_repository.insert_calls == []
-    assert dispatcher.feed_update_calls == []
+    assert repository.insert_calls == []
 
 
 def test_webhook_rejects_malformed_update() -> None:
-    app, _, dispatcher, inbox_repository, _ = make_app()
+    app, _, repository, _ = make_app()
 
     with TestClient(app) as client:
         response = client.post(
@@ -601,60 +258,37 @@ def test_webhook_rejects_malformed_update() -> None:
         )
 
     assert response.status_code == 422
-    error = response.json()["detail"][0]
-    assert error["type"] == "missing"
-    assert error["loc"] == ["body", "update_id"]
-    assert inbox_repository.insert_calls == []
-    assert dispatcher.feed_update_calls == []
+    assert repository.insert_calls == []
 
 
-def test_lifespan_registers_webhook_and_closes_resources() -> None:
-    app, bot, dispatcher, _, events = make_app(
-        webhook_base_url="https://example.com/",
-    )
+def test_http_lifespan_registers_webhook_and_closes_bot() -> None:
+    app, bot, _, events = make_app(webhook_base_url="https://example.com/")
 
     with TestClient(app):
-        assert events == ["startup", "set_webhook"]
+        assert events == ["set_webhook"]
 
     assert bot.set_webhook_calls == [
         {
             "url": "https://example.com/telegram/webhook",
             "secret_token": WEBHOOK_SECRET,
-            "allowed_updates": dispatcher.allowed_updates,
+            "allowed_updates": ["message"],
         }
     ]
-    assert events == [
-        "startup",
-        "set_webhook",
-        "shutdown",
-        "session_close",
-        "singularity_close",
-    ]
+    assert events == ["set_webhook", "session_close"]
     assert bot.session.closed is True
-    assert len(dispatcher.included_routers) == 1
-    assert dispatcher.allowed_updates == ["message"]
-    assert dispatcher.startup_calls == [
-        {
-            "bot": bot,
-            "app": app,
-            "dispatcher": dispatcher,
-            "dependency": "dispatcher-context",
-        }
-    ]
-    assert dispatcher.shutdown_calls == dispatcher.startup_calls
 
 
-def test_lifespan_skips_webhook_registration_without_base_url() -> None:
-    app, bot, _, _, events = make_app()
+def test_http_lifespan_skips_registration_without_base_url() -> None:
+    app, bot, _, events = make_app()
 
     with TestClient(app):
-        assert events == ["startup"]
+        assert events == []
 
     assert bot.set_webhook_calls == []
-    assert events == ["startup", "shutdown", "session_close", "singularity_close"]
+    assert events == ["session_close"]
 
 
-def test_lifespan_disposes_app_owned_database_engine(
+def test_http_lifespan_disposes_app_owned_database_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
@@ -671,73 +305,23 @@ def test_lifespan_disposes_app_owned_database_engine(
         fake_create_async_engine,
     )
     bot = FakeBot(events)
-    dispatcher = FakeDispatcher(events)
-    singularity_client = FakeSingularityClient(events)
-    app = create_app(
-        make_settings(),
-        bot=cast(Bot, bot),
-        dispatcher=cast(Dispatcher, dispatcher),
-        singularity_client=cast(SingularityClient, singularity_client),
-    )
+    app = create_app(make_settings(), bot=cast(Bot, bot))
 
     with TestClient(app):
         assert database_engine.disposed is False
 
     assert database_urls == ["postgresql+asyncpg://test:test@localhost/test"]
-    assert database_engine.disposed is True
-    assert events == [
-        "startup",
-        "shutdown",
-        "session_close",
-        "singularity_close",
-        "database_dispose",
-    ]
+    assert events == ["session_close", "database_dispose"]
 
 
-def test_set_webhook_error_fails_startup_and_closes_resources() -> None:
-    app, bot, _, _, events = make_app(
+def test_set_webhook_error_closes_http_resources() -> None:
+    app, bot, _, events = make_app(
         webhook_base_url="https://example.com",
         set_webhook_error=RuntimeError("set webhook failed"),
     )
 
-    with (
-        pytest.raises(
-            RuntimeError,
-            match="set webhook failed",
-        ),
-        TestClient(app),
-    ):
+    with pytest.raises(RuntimeError, match="set webhook failed"), TestClient(app):
         pytest.fail("TestClient entered a failed application lifespan")
 
-    assert events == [
-        "startup",
-        "set_webhook",
-        "shutdown",
-        "session_close",
-        "singularity_close",
-    ]
     assert bot.session.closed is True
-
-
-def test_session_closes_when_dispatcher_shutdown_fails() -> None:
-    app, bot, _, _, events = make_app(
-        shutdown_error=RuntimeError("shutdown failed"),
-    )
-
-    with pytest.raises(RuntimeError, match="shutdown failed"), TestClient(app):
-        pass
-
-    assert events == ["startup", "shutdown", "session_close", "singularity_close"]
-    assert bot.session.closed is True
-
-
-def test_singularity_client_closes_when_bot_session_close_fails() -> None:
-    app, bot, _, _, events = make_app(
-        session_close_error=RuntimeError("session close failed"),
-    )
-
-    with pytest.raises(RuntimeError, match="session close failed"), TestClient(app):
-        pass
-
-    assert events == ["startup", "shutdown", "session_close", "singularity_close"]
-    assert bot.session.closed is True
+    assert events == ["set_webhook", "session_close"]

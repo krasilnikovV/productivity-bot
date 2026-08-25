@@ -5,7 +5,12 @@ import pytest
 from pydantic import ValidationError
 
 from productivity_bot.adapters.singularity import SingularityAdapter, SingularityClient
-from productivity_bot.application.ports import TaskRepository
+from productivity_bot.application.ports import (
+    TaskMutationConfirmedError,
+    TaskMutationNotAppliedError,
+    TaskMutationOutcomeUnknownError,
+    TaskRepository,
+)
 from productivity_bot.domain.entities import Task
 
 INVALID_TASK_PAYLOADS = (
@@ -164,7 +169,62 @@ async def test_create_task_rejects_invalid_response(payload: dict[str, object]) 
         "token",
         transport=httpx2.MockTransport(handler),
     ) as client:
-        with pytest.raises(ValidationError):
+        with pytest.raises(TaskMutationConfirmedError):
+            await SingularityAdapter(client).create_task("Title")
+
+
+@pytest.mark.asyncio
+async def test_create_task_maps_request_not_sent_to_retryable_safe_error() -> None:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("connection failed", request=request)
+
+    async with SingularityClient(
+        "token",
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        with pytest.raises(TaskMutationNotAppliedError) as error_info:
+            await SingularityAdapter(client).create_task("Title")
+
+    assert error_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_create_task_maps_rejection_to_terminal_safe_error() -> None:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, request=request)
+
+    async with SingularityClient(
+        "token",
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        with pytest.raises(TaskMutationNotAppliedError) as error_info:
+            await SingularityAdapter(client).create_task("Title")
+
+    assert error_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response_or_error",
+    [
+        pytest.param(httpx2.ReadTimeout("response timeout"), id="read-timeout"),
+        pytest.param(httpx2.Response(503), id="server-error"),
+    ],
+)
+async def test_create_task_maps_ambiguous_failure_to_unknown_outcome(
+    response_or_error: httpx2.Response | httpx2.RequestError,
+) -> None:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        if isinstance(response_or_error, httpx2.RequestError):
+            response_or_error.request = request
+            raise response_or_error
+        return response_or_error
+
+    async with SingularityClient(
+        "token",
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        with pytest.raises(TaskMutationOutcomeUnknownError):
             await SingularityAdapter(client).create_task("Title")
 
 

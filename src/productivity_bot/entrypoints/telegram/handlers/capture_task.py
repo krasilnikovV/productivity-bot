@@ -7,6 +7,9 @@ from aiogram.methods import SendMessage
 from aiogram.types import Message
 
 from productivity_bot.application.use_cases import CaptureTask
+from productivity_bot.entrypoints.telegram.update_worker import (
+    TelegramUpdateProcessingAttempt,
+)
 
 
 def is_authorized_task_capture_message(
@@ -40,10 +43,15 @@ class CaptureTaskHandler:
         )
         self.router.message.register(self.handle, message_filter)
 
-    async def handle(self, message: Message) -> SendMessage:
+    async def handle(
+        self,
+        message: Message,
+        processing_attempt: TelegramUpdateProcessingAttempt,
+    ) -> SendMessage:
         message_text = message.text
         if message_text is None:
             raise ValueError("Task capture message must contain text")
 
+        await processing_attempt.mark_external_mutation_started()
         await self._capture_task.execute(message_text)
         return message.answer("Task captured")

@@ -1,10 +1,7 @@
-import asyncio
-import logging
 from secrets import compare_digest
 from typing import Annotated, Any
 
-from aiogram import Bot, Dispatcher
-from aiogram.methods import TelegramMethod
+from aiogram import Bot
 from aiogram.types import Update
 from fastapi import APIRouter, Header, HTTPException, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -13,7 +10,7 @@ from pydantic import ValidationError
 from productivity_bot.application.ports import TelegramUpdateInboxRepository
 
 TELEGRAM_WEBHOOK_PATH = "/telegram/webhook"
-logger = logging.getLogger(__name__)
+TELEGRAM_ALLOWED_UPDATE_TYPES = ("message",)
 
 
 class TelegramWebhookHandler:
@@ -21,15 +18,12 @@ class TelegramWebhookHandler:
         self,
         *,
         bot: Bot,
-        dispatcher: Dispatcher,
         webhook_secret: str,
         update_inbox_repository: TelegramUpdateInboxRepository,
     ) -> None:
         self._bot = bot
-        self._dispatcher = dispatcher
         self._webhook_secret = webhook_secret
         self._update_inbox_repository = update_inbox_repository
-        self._update_tasks: set[asyncio.Task[None]] = set()
         self.router = APIRouter(tags=["telegram"])
         self.router.add_api_route(
             TELEGRAM_WEBHOOK_PATH,
@@ -53,18 +47,10 @@ class TelegramWebhookHandler:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
         update = self._parse_update(update_data)
-        inserted = await self._update_inbox_repository.insert_update(
+        await self._update_inbox_repository.insert_update(
             update.update_id,
             update_data,
         )
-        if not inserted:
-            return Response(status_code=status.HTTP_200_OK)
-
-        # TODO: Replace this in-memory path with the ADR 0001 worker. Inbox rows
-        # remain pending here, so a worker must not consume them while this path runs.
-        task = asyncio.create_task(self._process_update(update))
-        self._update_tasks.add(task)
-        task.add_done_callback(self._update_tasks.discard)
         return Response(status_code=status.HTTP_200_OK)
 
     def _parse_update(self, update_data: dict[str, Any]) -> Update:
@@ -82,21 +68,3 @@ class TelegramWebhookHandler:
                 for validation_error in error.errors()
             ]
             raise RequestValidationError(errors, body=update_data) from error
-
-    async def _process_update(self, update: Update) -> None:
-        # noinspection broad-exception
-        try:
-            result = await self._dispatcher.feed_update(self._bot, update)
-            if isinstance(result, TelegramMethod):
-                await self._dispatcher.silent_call_request(
-                    bot=self._bot,
-                    result=result,
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Failed to process Telegram update %s", update.update_id)
-
-    async def wait_closed(self) -> None:
-        if self._update_tasks:
-            await asyncio.gather(*tuple(self._update_tasks))

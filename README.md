@@ -54,13 +54,29 @@ Apply database migrations:
 uv run alembic upgrade head
 ```
 
-Start the application:
+Start the HTTP webhook receiver:
 
 ```bash
-uv run uvicorn productivity_bot.main:app --reload
+uv run productivity-bot
 ```
 
-Once the application is running, the available HTTP endpoints can be viewed in
+The worker starts processing all `pending` inbox rows immediately, so verify
+that they are safe to process before its first startup.
+
+Start the Telegram update worker in another terminal:
+
+```bash
+uv run productivity-bot-telegram-update-worker
+```
+
+Both processes are required for full operation. The HTTP process validates and
+durably stores Telegram updates, while the worker processes the stored updates
+and calls Singularity. An HTTP 200 response from the webhook means that an update
+was committed to PostgreSQL; it does not mean that processing has completed.
+Run both processes under a supervisor outside local development so a failed
+process is restarted independently.
+
+Once the HTTP process is running, the available endpoints can be viewed in
 the Swagger UI at <http://127.0.0.1:8000/docs>.
 
 Run the checks:

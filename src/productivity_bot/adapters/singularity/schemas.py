@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -37,9 +37,12 @@ class TaskResponse(BaseModel):
                 "Date must be an ISO-formatted string",
             )
         try:
-            return datetime.fromisoformat(value)
+            parsed = datetime.fromisoformat(value)
         except ValueError as error:
             raise ValueError("Date must be an ISO-formatted string") from error
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
 
     @field_validator("priority", mode="before")
     @classmethod

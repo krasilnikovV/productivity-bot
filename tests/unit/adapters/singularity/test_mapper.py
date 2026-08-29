@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -45,7 +45,7 @@ def test_map_task_defaults_missing_dates_to_none(field: str) -> None:
     [
         pytest.param(
             "2026-08-29",
-            datetime.fromisoformat("2026-08-29"),
+            datetime(2026, 8, 29, tzinfo=UTC),
             id="date-only",
         ),
         pytest.param(
@@ -55,7 +55,7 @@ def test_map_task_defaults_missing_dates_to_none(field: str) -> None:
         ),
         pytest.param(
             "2026-08-29T12:15:30+03:00",
-            datetime(2026, 8, 29, 12, 15, 30, tzinfo=timezone(timedelta(hours=3))),
+            datetime(2026, 8, 29, 9, 15, 30, tzinfo=UTC),
             id="explicit-offset",
         ),
     ],
@@ -69,6 +69,8 @@ def test_map_task_parses_iso_dates(value: str, expected: datetime) -> None:
 
     assert task.start == expected
     assert task.deadline == expected
+    assert task.start.tzinfo is UTC
+    assert task.deadline.tzinfo is UTC
 
 
 @pytest.mark.parametrize("priority", [3, -1, "1", 1.0, True])

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 import httpx2
 import pytest
@@ -11,7 +12,7 @@ from productivity_bot.application.ports import (
     TaskMutationOutcomeUnknownError,
     TaskRepository,
 )
-from productivity_bot.domain.entities import Task
+from productivity_bot.domain.entities import Task, TaskPriority
 
 INVALID_TASK_PAYLOADS = (
     pytest.param({"title": "Missing id"}, id="missing-id"),
@@ -32,6 +33,9 @@ async def test_create_task_sends_title_and_maps_full_response() -> None:
             json={
                 "id": "T-123",
                 "title": "Buy groceries",
+                "start": "2026-08-29T09:15:30.123Z",
+                "deadline": "2026-08-29T12:15:30+03:00",
+                "priority": 0,
                 "projectId": "P-456",
                 "tags": [{"id": "tag-id"}],
             },
@@ -44,7 +48,13 @@ async def test_create_task_sends_title_and_maps_full_response() -> None:
         repository: TaskRepository = SingularityAdapter(client)
         task = await repository.create_task("Buy groceries")
 
-    assert task == Task(id="T-123", title="Buy groceries")
+    assert task == Task(
+        id="T-123",
+        title="Buy groceries",
+        start=datetime(2026, 8, 29, 9, 15, 30, 123000, tzinfo=UTC),
+        deadline=datetime.fromisoformat("2026-08-29T12:15:30+03:00"),
+        priority=TaskPriority.HIGH,
+    )
 
 
 @pytest.mark.asyncio
@@ -164,6 +174,22 @@ async def test_create_task_rejects_invalid_response(payload: dict[str, object]) 
     # noinspection unused-parameter
     async def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(201, json=payload)
+
+    async with SingularityClient(
+        "token",
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        with pytest.raises(TaskMutationConfirmedError):
+            await SingularityAdapter(client).create_task("Title")
+
+
+@pytest.mark.asyncio
+async def test_create_task_rejects_invalid_metadata_in_confirmed_response() -> None:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            201,
+            json={"id": "T-123", "title": "Title", "priority": 3},
+        )
 
     async with SingularityClient(
         "token",

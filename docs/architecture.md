@@ -482,16 +482,41 @@ request
    v
 load Singularity tasks
    |
-   +-- load calendar constraints
-   |
-   +-- load runtime state
+   v
+filter v0 candidates
    |
    v
-filter and rank
+rank v0 candidates
    |
    v
 return one task
 ```
+
+#### Temporary v0 selection policy
+
+This policy is temporary. It applies only until the initial `/next`
+implementation is superseded by a deliberately expanded selection policy.
+
+Use one selection-time reference for the whole selection. A task is a candidate
+only when it is active and its `start` is absent or not later than that
+reference. Exclude a task whose `start` is later than the reference before
+ranking.
+
+A candidate whose deadline is earlier than the selection-time reference is
+overdue. Every overdue candidate ranks ahead of every non-overdue candidate.
+Within each of those two groups, rank candidates by these keys in order:
+
+1. priority: `high`, then `normal`, then `low`;
+2. nearest deadline to the selection-time reference;
+3. earlier start;
+4. ascending task ID.
+
+A present deadline sorts before a missing deadline, and a present start sorts
+before a missing start. The task-ID comparison is the final tie-breaker, so the
+policy always selects one repeatable task.
+
+The v0 policy does not consider calendar constraints, task duration, runtime
+state, skip or snooze state, or LLM input or tie-breaking.
 
 ### Complete
 

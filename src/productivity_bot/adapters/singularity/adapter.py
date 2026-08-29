@@ -104,11 +104,35 @@ class SingularityAdapter:
                 "Singularity active-task read failed",
                 retryable=True,
             ) from error
+        except (ValueError, ValidationError) as error:
+            raise TaskReadError(
+                "Singularity returned an invalid active-task response",
+                retryable=False,
+            ) from error
 
     async def complete_task(self, task_id: str) -> None:
         request = CompleteTaskRequest()
-        await self._client.request(
-            "PATCH",
-            f"task/{task_id}",
-            json=request.model_dump(mode="json"),
-        )
+        try:
+            await self._client.request(
+                "PATCH",
+                f"task/{task_id}",
+                json=request.model_dump(mode="json"),
+            )
+        except SingularityRequestNotSentError as error:
+            raise TaskMutationNotAppliedError(
+                "Singularity task completion request was not sent",
+                retryable=True,
+            ) from error
+        except SingularityApiError as error:
+            if 400 <= error.status_code < 500:
+                raise TaskMutationNotAppliedError(
+                    "Singularity rejected task completion",
+                    retryable=False,
+                ) from error
+            raise TaskMutationOutcomeUnknownError(
+                "Singularity task completion outcome is unknown"
+            ) from error
+        except SingularityClientError as error:
+            raise TaskMutationOutcomeUnknownError(
+                "Singularity task completion outcome is unknown"
+            ) from error

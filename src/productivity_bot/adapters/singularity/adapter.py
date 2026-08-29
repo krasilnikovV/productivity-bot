@@ -17,6 +17,7 @@ from productivity_bot.application.ports import (
     TaskMutationConfirmedError,
     TaskMutationNotAppliedError,
     TaskMutationOutcomeUnknownError,
+    TaskReadError,
 )
 from productivity_bot.domain.entities import Task
 
@@ -70,28 +71,39 @@ class SingularityAdapter:
         tasks: list[Task] = []
         offset = 0
 
-        while True:
-            response = await self._client.request(
-                "GET",
-                "task",
-                params={
-                    "checked": 0,
-                    "isNote": "false",
-                    "includeRemoved": "false",
-                    "includeArchived": "false",
-                    "includeAllRecurrenceInstances": "true",
-                    "fields": "id,title,start,deadline,priority",
-                    "maxCount": PAGE_SIZE,
-                    "offset": offset,
-                },
-            )
-            page = TaskListResponse.model_validate(response.json())
-            tasks.extend(map_task(task) for task in page.tasks)
+        try:
+            while True:
+                response = await self._client.request(
+                    "GET",
+                    "task",
+                    params={
+                        "checked": 0,
+                        "isNote": "false",
+                        "includeRemoved": "false",
+                        "includeArchived": "false",
+                        "includeAllRecurrenceInstances": "true",
+                        "fields": "id,title,start,deadline,priority",
+                        "maxCount": PAGE_SIZE,
+                        "offset": offset,
+                    },
+                )
+                page = TaskListResponse.model_validate(response.json())
+                tasks.extend(map_task(task) for task in page.tasks)
 
-            if len(page.tasks) < PAGE_SIZE:
-                return tasks
+                if len(page.tasks) < PAGE_SIZE:
+                    return tasks
 
-            offset += PAGE_SIZE
+                offset += PAGE_SIZE
+        except SingularityApiError as error:
+            raise TaskReadError(
+                "Singularity active-task read failed",
+                retryable=error.status_code >= 500,
+            ) from error
+        except SingularityClientError as error:
+            raise TaskReadError(
+                "Singularity active-task read failed",
+                retryable=True,
+            ) from error
 
     async def complete_task(self, task_id: str) -> None:
         request = CompleteTaskRequest()

@@ -14,6 +14,7 @@ from productivity_bot.application.ports import (
     TaskMutationConfirmedError,
     TaskMutationNotAppliedError,
     TaskMutationOutcomeUnknownError,
+    TaskReadError,
     TelegramUpdateInboxRepository,
     UpdateTransitionError,
 )
@@ -224,6 +225,24 @@ class TelegramUpdateWorker:
                 claimed_update,
                 _error_message(str(error), detail_error),
             )
+            return
+        except TaskReadError as error:
+            if error.retryable:
+                await self._reschedule_safe_attempt(
+                    claimed_update,
+                    _error_message("Task read failed", error),
+                )
+            else:
+                await self._persist_processing_transition(
+                    claimed_update,
+                    "mark failed",
+                    partial(
+                        self._update_inbox_repository.mark_failed,
+                        claimed_update.update_id,
+                        claimed_update.attempt_count,
+                        _error_message("Task read failed", error),
+                    ),
+                )
             return
         except TaskMutationNotAppliedError as error:
             if error.retryable:

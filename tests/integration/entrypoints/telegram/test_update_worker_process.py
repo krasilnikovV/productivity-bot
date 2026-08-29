@@ -7,10 +7,17 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.methods import TelegramMethod
 
-from productivity_bot.application.ports import ClaimedUpdate, RecoveredUpdates
-from productivity_bot.application.use_cases import CaptureTask
+from productivity_bot.application.ports import (
+    ClaimedUpdate,
+    RecoveredUpdates,
+    TaskReadError,
+)
+from productivity_bot.application.use_cases import CaptureTask, GetNextAction
 from productivity_bot.domain.entities import Task
-from productivity_bot.entrypoints.telegram.handlers import CaptureTaskHandler
+from productivity_bot.entrypoints.telegram.handlers import (
+    CaptureTaskHandler,
+    NextActionHandler,
+)
 from productivity_bot.entrypoints.telegram.update_worker import TelegramUpdateWorker
 from productivity_bot.entrypoints.telegram.webhook import TelegramWebhookHandler
 
@@ -30,6 +37,11 @@ class FakeTaskRepository:
         return None
 
 
+class RetryableReadTaskRepository(FakeTaskRepository):
+    async def list_active_tasks(self) -> Sequence[Task]:
+        raise TaskReadError("Singularity active-task read failed", retryable=True)
+
+
 class FakeBot:
     def __init__(self) -> None:
         self.id = 123456
@@ -45,6 +57,9 @@ class FakeInboxRepository:
         self.payload: dict[str, Any] | None = None
         self.claimed = False
         self.marker_calls: list[tuple[int, int]] = []
+        self.reschedule_calls: list[tuple[int, int, str, datetime]] = []
+        self.failed_calls: list[tuple[int, int, str]] = []
+        self.uncertain_calls: list[tuple[int, int, str]] = []
         self.status = "empty"
 
     async def insert_update(
@@ -83,6 +98,7 @@ class FakeInboxRepository:
         error: str,
         available_at: datetime,
     ) -> None:
+        self.reschedule_calls.append((update_id, attempt_count, error, available_at))
         self.status = "pending"
 
     async def mark_succeeded(self, update_id: int, attempt_count: int) -> None:
@@ -94,6 +110,7 @@ class FakeInboxRepository:
         attempt_count: int,
         error: str,
     ) -> None:
+        self.failed_calls.append((update_id, attempt_count, error))
         self.status = "failed"
 
     async def mark_uncertain(
@@ -102,6 +119,7 @@ class FakeInboxRepository:
         attempt_count: int,
         error: str,
     ) -> None:
+        self.uncertain_calls.append((update_id, attempt_count, error))
         self.status = "uncertain"
 
     async def recover_abandoned_updates(
@@ -223,4 +241,61 @@ async def test_unauthorized_update_is_consumed_without_mutation_marker() -> None
 
     assert repository.marker_calls == []
     assert task_repository.created_titles == []
+    assert bot.calls == []
+
+
+@pytest.mark.asyncio
+async def test_retryable_next_action_read_error_is_rescheduled_without_marker() -> None:
+    repository = FakeInboxRepository()
+    bot = FakeBot()
+    dispatcher = Dispatcher()
+    task_repository = RetryableReadTaskRepository()
+    dispatcher.include_router(
+        NextActionHandler(
+            GetNextAction(task_repository),
+            allowed_user_ids=frozenset({123}),
+        ).router
+    )
+    await repository.insert_update(
+        42,
+        {
+            "update_id": 42,
+            "message": {
+                "message_id": 7,
+                "date": 1_754_000_000,
+                "from": {
+                    "id": 123,
+                    "is_bot": False,
+                    "first_name": "Test user",
+                },
+                "chat": {"id": 123, "type": "private"},
+                "text": "/next",
+            },
+        },
+    )
+    worker = TelegramUpdateWorker(
+        bot=cast(Bot, bot),
+        dispatcher=dispatcher,
+        update_inbox_repository=repository,
+        concurrency=1,
+        poll_interval=0.001,
+        claim_timeout=timedelta(minutes=5),
+        recovery_interval=60.0,
+        shutdown_grace_period=0.1,
+    )
+
+    await worker.start()
+    try:
+        async def wait_for_reschedule() -> None:
+            while not repository.reschedule_calls:
+                await asyncio.sleep(0.001)
+
+        await asyncio.wait_for(wait_for_reschedule(), timeout=0.5)
+    finally:
+        await worker.stop()
+
+    assert repository.marker_calls == []
+    assert repository.reschedule_calls[0][:2] == (42, 1)
+    assert repository.failed_calls == []
+    assert repository.uncertain_calls == []
     assert bot.calls == []

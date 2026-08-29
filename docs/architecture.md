@@ -254,9 +254,10 @@ Transport models should not be passed directly into application logic.
 
 Until linked Telegram accounts are stored in PostgreSQL, the current MVP uses the
 required `TELEGRAM_ALLOWED_USER_IDS` setting as an account allowlist. Telegram
-handlers that mutate state accept only private-chat messages whose sender ID is
-in this allowlist. Messages without a sender and messages from groups,
-supergroups, or channels are not passed to application use cases.
+task handlers accept only private-chat messages whose sender ID is in this
+allowlist. Messages without a sender and messages from groups, supergroups, or
+channels are not passed to application use cases. Mutating handlers must also
+record the external mutation marker immediately before the use case call.
 
 ### Telegram webhook delivery
 

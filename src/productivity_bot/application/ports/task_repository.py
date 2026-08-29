@@ -20,6 +20,14 @@ class TaskMutationConfirmedError(Exception):
     """A task mutation succeeded, but its result could not be consumed."""
 
 
+class TaskReadError(Exception):
+    """Reading tasks failed with a known retry policy."""
+
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        self.retryable = retryable
+        super().__init__(message)
+
+
 class TaskRepository(Protocol):
     async def create_task(self, title: str) -> Task: ...
 

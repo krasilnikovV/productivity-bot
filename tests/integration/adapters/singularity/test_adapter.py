@@ -10,6 +10,7 @@ from productivity_bot.application.ports import (
     TaskMutationConfirmedError,
     TaskMutationNotAppliedError,
     TaskMutationOutcomeUnknownError,
+    TaskReadError,
     TaskRepository,
 )
 from productivity_bot.domain.entities import Task, TaskPriority
@@ -161,6 +162,35 @@ async def test_list_active_tasks_returns_empty_list_after_one_request() -> None:
 
     assert tasks == []
     assert request_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response_or_error,retryable",
+    [
+        pytest.param(httpx2.ReadTimeout("response timeout"), True, id="timeout"),
+        pytest.param(httpx2.Response(503), True, id="server-error"),
+        pytest.param(httpx2.Response(400), False, id="client-error"),
+    ],
+)
+async def test_list_active_tasks_classifies_external_errors(
+    response_or_error: httpx2.Response | httpx2.RequestError,
+    retryable: bool,
+) -> None:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        if isinstance(response_or_error, httpx2.RequestError):
+            response_or_error.request = request
+            raise response_or_error
+        return response_or_error
+
+    async with SingularityClient(
+        "token",
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        with pytest.raises(TaskReadError) as error_info:
+            await SingularityAdapter(client).list_active_tasks()
+
+    assert error_info.value.retryable is retryable
 
 
 @pytest.mark.asyncio

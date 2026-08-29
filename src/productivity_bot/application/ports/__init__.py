@@ -2,6 +2,7 @@ from productivity_bot.application.ports.task_repository import (
     TaskMutationConfirmedError,
     TaskMutationNotAppliedError,
     TaskMutationOutcomeUnknownError,
+    TaskReadError,
     TaskRepository,
 )
 from productivity_bot.application.ports.telegram_update_inbox_repository import (
@@ -17,6 +18,7 @@ __all__ = [
     "TaskMutationConfirmedError",
     "TaskMutationNotAppliedError",
     "TaskMutationOutcomeUnknownError",
+    "TaskReadError",
     "TaskRepository",
     "TelegramUpdateInboxRepository",
     "UpdateTransitionError",

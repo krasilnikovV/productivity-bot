@@ -80,7 +80,7 @@ class SingularityAdapter:
                     "includeRemoved": "false",
                     "includeArchived": "false",
                     "includeAllRecurrenceInstances": "true",
-                    "fields": "id,title",
+                    "fields": "id,title,start,deadline,priority",
                     "maxCount": PAGE_SIZE,
                     "offset": offset,
                 },

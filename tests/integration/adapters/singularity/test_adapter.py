@@ -72,7 +72,7 @@ async def test_list_active_tasks_sends_filters_and_stops_after_short_page() -> N
             "includeRemoved": "false",
             "includeArchived": "false",
             "includeAllRecurrenceInstances": "true",
-            "fields": "id,title",
+            "fields": "id,title,start,deadline,priority",
             "maxCount": "1000",
             "offset": "0",
         }
@@ -81,7 +81,14 @@ async def test_list_active_tasks_sends_filters_and_stops_after_short_page() -> N
             200,
             json={
                 "tasks": [
-                    {"id": "T-1", "title": "First", "extra": "ignored"},
+                    {
+                        "id": "T-1",
+                        "title": "First",
+                        "start": "2026-08-29T09:15:30.123Z",
+                        "deadline": "2026-08-29T12:15:30+03:00",
+                        "priority": 0,
+                        "extra": "ignored",
+                    },
                     {"id": "T-2", "title": "Second"},
                 ],
                 "extra": "ignored",
@@ -94,7 +101,16 @@ async def test_list_active_tasks_sends_filters_and_stops_after_short_page() -> N
     ) as client:
         tasks = await SingularityAdapter(client).list_active_tasks()
 
-    assert tasks == [Task(id="T-1", title="First"), Task(id="T-2", title="Second")]
+    assert tasks == [
+        Task(
+            id="T-1",
+            title="First",
+            start=datetime(2026, 8, 29, 9, 15, 30, 123000, tzinfo=UTC),
+            deadline=datetime.fromisoformat("2026-08-29T12:15:30+03:00"),
+            priority=TaskPriority.HIGH,
+        ),
+        Task(id="T-2", title="Second"),
+    ]
     assert request_count == 1
 
 

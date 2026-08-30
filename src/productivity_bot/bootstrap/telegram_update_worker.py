@@ -12,9 +12,12 @@ from sqlalchemy.ext.asyncio import (
 from productivity_bot.adapters.postgres import PostgresTelegramUpdateInboxRepository
 from productivity_bot.adapters.singularity import SingularityAdapter, SingularityClient
 from productivity_bot.application.ports import TelegramUpdateInboxRepository
-from productivity_bot.application.use_cases import CaptureTask
+from productivity_bot.application.use_cases import CaptureTask, GetNextAction
 from productivity_bot.config import Settings
-from productivity_bot.entrypoints.telegram.handlers import CaptureTaskHandler
+from productivity_bot.entrypoints.telegram.handlers import (
+    CaptureTaskHandler,
+    NextActionHandler,
+)
 from productivity_bot.entrypoints.telegram.update_worker import TelegramUpdateWorker
 
 logger = logging.getLogger(__name__)
@@ -66,7 +69,12 @@ async def run_telegram_update_worker(
         CaptureTask(singularity_adapter),
         allowed_user_ids=settings.telegram_allowed_user_ids,
     )
+    next_action_handler = NextActionHandler(
+        GetNextAction(singularity_adapter),
+        allowed_user_ids=settings.telegram_allowed_user_ids,
+    )
     application_dispatcher.include_router(capture_task_handler.router)
+    application_dispatcher.include_router(next_action_handler.router)
     application_worker = (
         worker
         if worker is not None

@@ -106,7 +106,7 @@ async def test_worker_runtime_starts_and_closes_resources_in_order(
         "bot_close",
         "singularity_close",
     ]
-    dispatcher.include_router.assert_called_once()
+    assert dispatcher.include_router.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -236,7 +236,7 @@ async def test_worker_runtime_builds_and_closes_owned_resources(
             settings.telegram_update_worker_shutdown_grace_period_seconds
         ),
     )
-    dispatcher.include_router.assert_called_once()
+    assert dispatcher.include_router.call_count == 2
     worker.start.assert_awaited_once_with()
     worker.stop.assert_awaited_once_with()
     dispatcher.emit_shutdown.assert_awaited_once()

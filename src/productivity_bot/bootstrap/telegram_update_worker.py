@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import (
@@ -64,13 +65,17 @@ async def run_telegram_update_worker(
             telegram_update_inbox_repository
         )
 
-    singularity_adapter = SingularityAdapter(application_singularity_client)
+    user_timezone = ZoneInfo(settings.user_timezone)
+    singularity_adapter = SingularityAdapter(
+        application_singularity_client,
+        user_timezone,
+    )
     capture_task_handler = CaptureTaskHandler(
         CaptureTask(singularity_adapter),
         allowed_user_ids=settings.telegram_allowed_user_ids,
     )
     next_action_handler = NextActionHandler(
-        GetNextAction(singularity_adapter),
+        GetNextAction(singularity_adapter, user_timezone),
         allowed_user_ids=settings.telegram_allowed_user_ids,
     )
     application_dispatcher.include_router(capture_task_handler.router)

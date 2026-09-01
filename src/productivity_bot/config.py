@@ -1,5 +1,6 @@
 import re
 from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, PositiveFloat, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,6 +13,7 @@ class Settings(BaseSettings):
     singularity_api_token: SecretStr
     database_url: SecretStr
     webhook_base_url: str = ""
+    user_timezone: str = "Europe/Moscow"
     telegram_update_worker_concurrency: PositiveInt = 4
     telegram_update_worker_poll_interval_seconds: PositiveFloat = 1.0
     telegram_update_worker_claim_timeout_seconds: PositiveFloat = 300.0
@@ -30,6 +32,15 @@ class Settings(BaseSettings):
         secret = value.get_secret_value()
         if re.fullmatch(r"[A-Za-z0-9_-]{1,256}", secret) is None:
             raise ValueError("Telegram webhook secret has an invalid format")
+        return value
+
+    @field_validator("user_timezone")
+    @classmethod
+    def validate_user_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError) as error:
+            raise ValueError("User timezone must be a valid IANA timezone") from error
         return value
 
 

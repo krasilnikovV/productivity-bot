@@ -23,6 +23,14 @@ Early MVP development.
 * [Product](docs/product.md)
 * [Architecture](docs/architecture.md)
 
+## Time zone
+
+The bot treats task dates without an explicit time zone as local time. The
+default is `Europe/Moscow`. To use another time zone, set `USER_TIMEZONE` in
+`.env` to an IANA name such as `Asia/Tbilisi`.
+
+Restart the Telegram update worker after changing this setting.
+
 ## Development
 
 The project requires Python 3.13 or newer and uses `uv` for dependency management.

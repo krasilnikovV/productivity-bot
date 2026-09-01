@@ -516,6 +516,12 @@ A present deadline sorts before a missing deadline, and a present start sorts
 before a missing start. The task-ID comparison is the final tie-breaker, so the
 policy always selects one repeatable task.
 
+Timezone-aware references, starts, and deadlines are normalized to their UTC
+instant. Singularity date values without an offset are interpreted in the
+configured user IANA timezone by the Singularity adapter, then normalized to
+UTC. The selector applies the same rule to any remaining timezone-naive values.
+This normalization does not change the candidate filter or ranking order.
+
 The v0 policy does not consider calendar constraints, task duration, runtime
 state, skip or snooze state, or LLM input or tie-breaking.
 

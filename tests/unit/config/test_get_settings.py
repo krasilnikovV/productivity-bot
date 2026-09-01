@@ -27,6 +27,7 @@ def test_get_settings_loads_values_from_environment(
         "postgresql+asyncpg://env-user:env-password@localhost/env-database",
     )
     monkeypatch.setenv("WEBHOOK_BASE_URL", "https://test.example.com")
+    monkeypatch.setenv("USER_TIMEZONE", "America/New_York")
     monkeypatch.setenv("TELEGRAM_UPDATE_WORKER_CONCURRENCY", "7")
     monkeypatch.setenv("TELEGRAM_UPDATE_WORKER_POLL_INTERVAL_SECONDS", "0.25")
     monkeypatch.setenv("TELEGRAM_UPDATE_WORKER_CLAIM_TIMEOUT_SECONDS", "600")
@@ -46,6 +47,7 @@ def test_get_settings_loads_values_from_environment(
         "postgresql+asyncpg://env-user:env-password@localhost/env-database"
     )
     assert settings.webhook_base_url == "https://test.example.com"
+    assert settings.user_timezone == "America/New_York"
     assert settings.telegram_update_worker_concurrency == 7
     assert settings.telegram_update_worker_poll_interval_seconds == 0.25
     assert settings.telegram_update_worker_claim_timeout_seconds == 600.0

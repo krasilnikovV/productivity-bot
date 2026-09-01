@@ -181,6 +181,11 @@ async def test_worker_runtime_builds_and_closes_owned_resources(
     session_factory_constructor = Mock(return_value=session_factory)
     repository_constructor = Mock(return_value=repository)
     worker_constructor = Mock(return_value=worker)
+    user_timezone = Mock()
+    zoneinfo_constructor = Mock(return_value=user_timezone)
+    singularity_adapter = Mock()
+    singularity_adapter_constructor = Mock(return_value=singularity_adapter)
+    get_next_action_constructor = Mock()
     monkeypatch.setattr(worker_module, "Bot", bot_constructor)
     monkeypatch.setattr(worker_module, "Dispatcher", dispatcher_constructor)
     monkeypatch.setattr(
@@ -204,6 +209,13 @@ async def test_worker_runtime_builds_and_closes_owned_resources(
         repository_constructor,
     )
     monkeypatch.setattr(worker_module, "TelegramUpdateWorker", worker_constructor)
+    monkeypatch.setattr(worker_module, "ZoneInfo", zoneinfo_constructor)
+    monkeypatch.setattr(
+        worker_module,
+        "SingularityAdapter",
+        singularity_adapter_constructor,
+    )
+    monkeypatch.setattr(worker_module, "GetNextAction", get_next_action_constructor)
 
     if start_error is None:
         await run_telegram_update_worker(settings, shutdown_event)
@@ -222,6 +234,14 @@ async def test_worker_runtime_builds_and_closes_owned_resources(
         expire_on_commit=False,
     )
     repository_constructor.assert_called_once_with(session_factory)
+    zoneinfo_constructor.assert_called_once_with(settings.user_timezone)
+    singularity_adapter_constructor.assert_called_once_with(
+        singularity_client,
+        user_timezone,
+    )
+    assert get_next_action_constructor.call_count == 1
+    assert get_next_action_constructor.call_args.args[0] is singularity_adapter
+    assert get_next_action_constructor.call_args.args[1] is user_timezone
     worker_constructor.assert_called_once_with(
         bot=bot,
         dispatcher=dispatcher,

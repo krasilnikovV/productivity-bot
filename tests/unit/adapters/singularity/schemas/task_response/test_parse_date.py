@@ -11,7 +11,7 @@ from productivity_bot.adapters.singularity.schemas import TaskResponse
     [
         pytest.param(
             {"start": "2026-08-29", "deadline": "2026-08-29"},
-            datetime(2026, 8, 29, tzinfo=UTC),
+            datetime.fromisoformat("2026-08-29"),
             id="date-only",
         ),
         pytest.param(
@@ -32,7 +32,7 @@ from productivity_bot.adapters.singularity.schemas import TaskResponse
         ),
     ],
 )
-def test_task_response_normalizes_dates_to_utc(
+def test_task_response_parses_dates(
     payload: dict[str, str],
     expected: datetime,
 ) -> None:

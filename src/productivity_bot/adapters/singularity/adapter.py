@@ -1,3 +1,5 @@
+from zoneinfo import ZoneInfo
+
 from pydantic import ValidationError
 
 from productivity_bot.adapters.singularity.client import (
@@ -27,8 +29,9 @@ PAGE_SIZE = 1000
 class SingularityAdapter:
     """Implement task repository operations through the Singularity API."""
 
-    def __init__(self, client: SingularityClient) -> None:
+    def __init__(self, client: SingularityClient, user_timezone: ZoneInfo) -> None:
         self._client = client
+        self._user_timezone = user_timezone
 
     async def create_task(self, title: str) -> Task:
         request = CreateTaskRequest(title=title)
@@ -63,7 +66,7 @@ class SingularityAdapter:
             raise TaskMutationConfirmedError(
                 "Singularity confirmed task creation but returned an invalid response"
             ) from error
-        return map_task(task)
+        return map_task(task, self._user_timezone)
 
     async def list_active_tasks(self) -> list[Task]:
         """Return all incomplete, non-note, non-removed, and non-archived tasks."""
@@ -88,7 +91,9 @@ class SingularityAdapter:
                     },
                 )
                 page = TaskListResponse.model_validate(response.json())
-                tasks.extend(map_task(task) for task in page.tasks)
+                tasks.extend(
+                    map_task(task, self._user_timezone) for task in page.tasks
+                )
 
                 if len(page.tasks) < PAGE_SIZE:
                     return tasks

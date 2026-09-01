@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import httpx2
 import pytest
@@ -12,6 +13,8 @@ from productivity_bot.application.ports import (
     TaskRepository,
 )
 from productivity_bot.domain.entities import Task, TaskPriority
+
+USER_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 INVALID_TASK_PAYLOADS = (
     pytest.param({"title": "Missing id"}, id="missing-id"),
@@ -44,7 +47,7 @@ async def test_create_task_sends_title_and_maps_full_response() -> None:
         "token",
         transport=httpx2.MockTransport(handler),
     ) as client:
-        repository: TaskRepository = SingularityAdapter(client)
+        repository: TaskRepository = SingularityAdapter(client, USER_TIMEZONE)
         task = await repository.create_task("Buy groceries")
 
     assert task == Task(
@@ -71,7 +74,7 @@ async def test_create_task_rejects_invalid_response(payload: dict[str, object]) 
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationConfirmedError):
-            await SingularityAdapter(client).create_task("Title")
+            await SingularityAdapter(client, USER_TIMEZONE).create_task("Title")
 
 
 @pytest.mark.asyncio
@@ -87,7 +90,7 @@ async def test_create_task_rejects_invalid_metadata_in_confirmed_response() -> N
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationConfirmedError):
-            await SingularityAdapter(client).create_task("Title")
+            await SingularityAdapter(client, USER_TIMEZONE).create_task("Title")
 
 
 @pytest.mark.asyncio
@@ -100,7 +103,7 @@ async def test_create_task_classifies_malformed_success_response_as_confirmed_mu
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationConfirmedError):
-            await SingularityAdapter(client).create_task("Title")
+            await SingularityAdapter(client, USER_TIMEZONE).create_task("Title")
 
 
 @pytest.mark.asyncio
@@ -113,7 +116,7 @@ async def test_create_task_maps_request_not_sent_to_retryable_safe_error() -> No
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationNotAppliedError) as error_info:
-            await SingularityAdapter(client).create_task("Title")
+            await SingularityAdapter(client, USER_TIMEZONE).create_task("Title")
 
     assert error_info.value.retryable is True
 
@@ -128,7 +131,7 @@ async def test_create_task_maps_rejection_to_terminal_safe_error() -> None:
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationNotAppliedError) as error_info:
-            await SingularityAdapter(client).create_task("Title")
+            await SingularityAdapter(client, USER_TIMEZONE).create_task("Title")
 
     assert error_info.value.retryable is False
 
@@ -155,4 +158,4 @@ async def test_create_task_maps_ambiguous_failure_to_unknown_outcome(
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationOutcomeUnknownError):
-            await SingularityAdapter(client).create_task("Title")
+            await SingularityAdapter(client, USER_TIMEZONE).create_task("Title")

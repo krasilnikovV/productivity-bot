@@ -24,6 +24,7 @@ def test_webhook_base_url_defaults_to_empty(
     settings = Settings(**valid_settings_values(), _env_file=None)
 
     assert settings.webhook_base_url == ""
+    assert settings.user_timezone == "Europe/Moscow"
     assert settings.telegram_update_worker_concurrency == 4
     assert settings.telegram_update_worker_poll_interval_seconds == 1.0
     assert settings.telegram_update_worker_claim_timeout_seconds == 300.0
@@ -87,6 +88,24 @@ def test_telegram_webhook_secret_is_required(
 
     with pytest.raises(ValidationError):
         Settings(**values, _env_file=None)
+
+
+def test_user_timezone_accepts_a_valid_iana_key() -> None:
+    settings = Settings(
+        **valid_settings_values(user_timezone="America/New_York"),
+        _env_file=None,
+    )
+
+    assert settings.user_timezone == "America/New_York"
+
+
+@pytest.mark.parametrize("user_timezone", ["not-a-timezone", "../invalid"])
+def test_user_timezone_rejects_an_invalid_iana_key(user_timezone: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            **valid_settings_values(user_timezone=user_timezone),
+            _env_file=None,
+        )
 
 
 def test_telegram_allowed_user_ids_is_required(

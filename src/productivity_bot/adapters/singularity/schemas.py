@@ -41,7 +41,7 @@ class TaskResponse(BaseModel):
         except ValueError as error:
             raise ValueError("Date must be an ISO-formatted string") from error
         if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=UTC)
+            return parsed
         return parsed.astimezone(UTC)
 
     @field_validator("priority", mode="before")

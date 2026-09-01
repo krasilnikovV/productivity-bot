@@ -1,11 +1,15 @@
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import httpx2
 import pytest
 
 from productivity_bot.adapters.singularity import SingularityAdapter, SingularityClient
 from productivity_bot.application.ports import TaskReadError
+from productivity_bot.application.use_cases import GetNextAction
 from productivity_bot.domain.entities import Task, TaskPriority
+
+USER_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 INVALID_TASK_PAYLOADS = (
     pytest.param({"title": "Missing id"}, id="missing-id"),
@@ -57,7 +61,7 @@ async def test_list_active_tasks_sends_filters_and_stops_after_short_page() -> N
         "token",
         transport=httpx2.MockTransport(handler),
     ) as client:
-        tasks = await SingularityAdapter(client).list_active_tasks()
+        tasks = await SingularityAdapter(client, USER_TIMEZONE).list_active_tasks()
 
     assert tasks == [
         Task(
@@ -70,6 +74,41 @@ async def test_list_active_tasks_sends_filters_and_stops_after_short_page() -> N
         Task(id="T-2", title="Second"),
     ]
     assert request_count == 1
+
+
+@pytest.mark.asyncio
+async def test_list_active_tasks_interprets_naive_dates_in_the_user_timezone() -> None:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            json={
+                "tasks": [
+                    {
+                        "id": "T-local",
+                        "title": "Local task",
+                        "start": "2026-08-29T14:00:00",
+                        "deadline": "2026-08-29T14:00:00",
+                    },
+                    {
+                        "id": "T-available",
+                        "title": "Available task",
+                        "priority": 0,
+                    },
+                ]
+            },
+        )
+
+    async with SingularityClient(
+        "token",
+        transport=httpx2.MockTransport(handler),
+    ) as client:
+        task = await GetNextAction(
+            SingularityAdapter(client, USER_TIMEZONE),
+            USER_TIMEZONE,
+        ).execute(datetime(2026, 8, 29, 12, 0, tzinfo=UTC))
+
+    assert task is not None
+    assert task.id == "T-local"
 
 
 @pytest.mark.asyncio
@@ -93,7 +132,7 @@ async def test_list_active_tasks_reads_full_page_then_short_page() -> None:
         "token",
         transport=httpx2.MockTransport(handler),
     ) as client:
-        tasks = await SingularityAdapter(client).list_active_tasks()
+        tasks = await SingularityAdapter(client, USER_TIMEZONE).list_active_tasks()
 
     assert offsets == [0, 1000]
     assert tasks == [
@@ -115,7 +154,7 @@ async def test_list_active_tasks_returns_empty_list_after_one_request() -> None:
         "token",
         transport=httpx2.MockTransport(handler),
     ) as client:
-        tasks = await SingularityAdapter(client).list_active_tasks()
+        tasks = await SingularityAdapter(client, USER_TIMEZONE).list_active_tasks()
 
     assert tasks == []
     assert request_count == 1
@@ -145,7 +184,7 @@ async def test_list_active_tasks_classifies_external_errors(
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskReadError) as error_info:
-            await SingularityAdapter(client).list_active_tasks()
+            await SingularityAdapter(client, USER_TIMEZONE).list_active_tasks()
 
     assert error_info.value.retryable is retryable
 
@@ -167,7 +206,7 @@ async def test_list_active_tasks_rejects_invalid_task_response(
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskReadError) as error_info:
-            await SingularityAdapter(client).list_active_tasks()
+            await SingularityAdapter(client, USER_TIMEZONE).list_active_tasks()
 
     assert error_info.value.retryable is False
 
@@ -182,6 +221,6 @@ async def test_list_active_tasks_classifies_malformed_success_response_as_read_e
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskReadError) as error_info:
-            await SingularityAdapter(client).list_active_tasks()
+            await SingularityAdapter(client, USER_TIMEZONE).list_active_tasks()
 
     assert error_info.value.retryable is False

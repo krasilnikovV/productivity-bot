@@ -1,4 +1,5 @@
 import json
+from zoneinfo import ZoneInfo
 
 import httpx2
 import pytest
@@ -8,6 +9,8 @@ from productivity_bot.application.ports import (
     TaskMutationNotAppliedError,
     TaskMutationOutcomeUnknownError,
 )
+
+USER_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 
 @pytest.mark.asyncio
@@ -25,7 +28,7 @@ async def test_complete_task_patches_checked_status() -> None:
         "token",
         transport=httpx2.MockTransport(handler),
     ) as client:
-        await SingularityAdapter(client).complete_task("T-123")
+        await SingularityAdapter(client, USER_TIMEZONE).complete_task("T-123")
 
 
 @pytest.mark.asyncio
@@ -38,7 +41,7 @@ async def test_complete_task_maps_request_not_sent_to_retryable_safe_error() -> 
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationNotAppliedError) as error_info:
-            await SingularityAdapter(client).complete_task("T-123")
+            await SingularityAdapter(client, USER_TIMEZONE).complete_task("T-123")
 
     assert error_info.value.retryable is True
 
@@ -53,7 +56,7 @@ async def test_complete_task_maps_rejection_to_terminal_safe_error() -> None:
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationNotAppliedError) as error_info:
-            await SingularityAdapter(client).complete_task("T-123")
+            await SingularityAdapter(client, USER_TIMEZONE).complete_task("T-123")
 
     assert error_info.value.retryable is False
 
@@ -80,4 +83,4 @@ async def test_complete_task_maps_ambiguous_failure_to_unknown_outcome(
         transport=httpx2.MockTransport(handler),
     ) as client:
         with pytest.raises(TaskMutationOutcomeUnknownError):
-            await SingularityAdapter(client).complete_task("T-123")
+            await SingularityAdapter(client, USER_TIMEZONE).complete_task("T-123")
